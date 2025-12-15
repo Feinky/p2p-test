@@ -1,40 +1,53 @@
 <!DOCTYPE html>
 <html>
-<head><title>P2P File Test</title></head>
+<head><title>P2P File Test - FIXED</title></head>
 <body>
 <input type="file" id="fileInput"><button onclick="sendFile()">Send</button>
+<button onclick="connectAsReceiver()">Connect as Receiver</button>
 <div id="status"></div>
 <div id="progress"></div>
 <script>
 const pc = new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
-let channel, file, chunks = [];
+let channel, file, chunks = [], isReceiver = false;
 
 pc.ondatachannel = e => {
   channel = e.channel;
   channel.onmessage = e => receiveChunk(e.data);
-  document.getElementById('status').innerHTML = 'Connected! Ready to receive.';
+  document.getElementById('status').innerHTML = '✅ Connected! Ready to receive.';
 };
+
+function cleanBase64(str) {
+  return str.replace(/[\n\r\s]/g, ''); // Remove newlines/spaces
+}
 
 function sendFile() {
   file = document.getElementById('fileInput').files[0];
+  if(!file) return alert('Pick a file first');
+  
   channel = pc.createDataChannel('file');
   channel.onopen = () => sendChunks();
+  
   pc.createOffer().then(offer => {
     pc.setLocalDescription(offer);
-    console.log('OFFER:', btoa(JSON.stringify(offer))); // Copy this
+    const offerStr = btoa(JSON.stringify(offer));
+    document.getElementById('status').innerHTML = `Copy this OFFER: ${offerStr.substring(0,20)}...`;
+    console.log('OFFER (clean):', offerStr); // Clean copyable version
   });
 }
 
 function sendChunks() {
   const chunkSize = 16384;
   let offset = 0;
-  channel.send(JSON.stringify({name:file.name, size:file.size})); // metadata
+  channel.send(JSON.stringify({name:file.name, size:file.size}));
+  
   function next() {
     const reader = new FileReader();
     reader.onload = e => {
       channel.send(e.target.result);
       offset += chunkSize;
+      document.getElementById('progress').innerHTML = `${Math.round(offset/file.size*100)}%`;
       if(offset < file.size) next();
+      else document.getElementById('status').innerHTML += ' ✅ Sent!';
     };
     reader.readAsArrayBuffer(file.slice(offset, offset+chunkSize));
   }
@@ -42,16 +55,17 @@ function sendChunks() {
 }
 
 function receiveChunk(data) {
-  const dataStr = new TextDecoder().decode(data);
-  if(!file && dataStr.startsWith('{')) {
-    const meta = JSON.parse(dataStr);
-    file = new Blob([], {type:'application/octet-stream'});
-    chunks = [];
-    document.getElementById('status').innerHTML = `Receiving ${meta.name} (${meta.size} bytes)`;
-    return;
-  }
+  try {
+    const dataStr = new TextDecoder().decode(new Uint8Array(data)).trim();
+    if(!file && dataStr.startsWith('{')) {
+      const meta = JSON.parse(dataStr);
+      file = new Blob([], {type:'application/octet-stream'});
+      chunks = [];
+      document.getElementById('status').innerHTML = `Receiving ${meta.name} (${meta.size} bytes)`;
+      return;
+    }
+  } catch(e) {}
   chunks.push(data);
-  document.getElementById('progress').innerHTML = `${chunks.length*16}KB received`;
   if(chunks.reduce((a,b)=>a+b.byteLength,0) >= file.size) {
     download(new Blob(chunks));
   }
@@ -62,18 +76,23 @@ function download(blob) {
   a.href = URL.createObjectURL(blob);
   a.download = file.name;
   a.click();
-  document.getElementById('status').innerHTML = '✅ File received!';
+  document.getElementById('status').innerHTML = '🎉 File received & downloaded!';
 }
 
-// RECEIVER: Paste OFFER from sender console here:
-function connect(offerStr) {
-  const offer = JSON.parse(atob(offerStr));
-  pc.setRemoteDescription(offer).then(()=>pc.createAnswer()).then(answer=>{
-    pc.setLocalDescription(answer);
-    console.log('ANSWER:', btoa(JSON.stringify(answer))); // Copy back to sender
-  });
+function connectAsReceiver() {
+  const offerStr = prompt('Paste OFFER from sender console:');
+  if(!offerStr) return;
+  
+  const cleanOffer = JSON.parse(atob(cleanBase64(offerStr)));
+  pc.setRemoteDescription(cleanOffer).then(() => {
+    pc.createAnswer().then(answer => {
+      pc.setLocalDescription(answer);
+      const answerStr = btoa(JSON.stringify(answer));
+      document.getElementById('status').innerHTML = `Copy ANSWER: ${answerStr.substring(0,20)}...`;
+      console.log('ANSWER (clean):', answerStr);
+    });
+  }).catch(e => alert('Invalid offer: ' + e));
 }
 </script>
-<button onclick="connect(prompt('Paste OFFER from sender console'))">Connect as Receiver</button>
 </body>
 </html>
