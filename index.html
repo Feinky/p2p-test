@@ -2,167 +2,210 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Titan Transfer | Multi-File P2P</title>
+    <title>Titan P2P Dashboard</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        :root { --primary: #6366f1; --bg: #0f172a; --card: rgba(30, 41, 59, 0.8); --text: #f8fafc; }
-        body { font-family: 'Inter', sans-serif; background: #0b0e14; color: var(--text); display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-        .glass-card { background: var(--card); backdrop-filter: blur(15px); padding: 2rem; border-radius: 20px; width: 450px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-        .status-bar { display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 1rem; color: #94a3b8; }
-        .badge { padding: 4px 10px; border-radius: 20px; background: rgba(99, 102, 241, 0.2); color: var(--primary); font-weight: bold; }
-        input[type="text"] { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: white; margin-bottom: 1rem; box-sizing: border-box; }
-        .file-list { margin-top: 1rem; background: rgba(0,0,0,0.2); border-radius: 10px; max-height: 200px; overflow-y: auto; }
-        .file-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.9rem; }
-        .btn { width: 100%; padding: 12px; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; margin-top: 5px; }
-        .btn-p { background: var(--primary); color: white; }
-        .btn-s { background: #10b981; color: white; padding: 5px 12px; width: auto; font-size: 0.8rem; }
-        progress { width: 100%; height: 8px; border-radius: 10px; margin: 10px 0; accent-color: var(--primary); }
+        :root { --p: #6366f1; --bg: #0b0e14; --card: #18181b; --text: #f4f4f5; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        
+        /* Persistent Header */
+        header { background: var(--card); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #27272a; }
+        .room-nav { display: flex; gap: 10px; align-items: center; }
+        .badge { background: #27272a; padding: 5px 12px; border-radius: 15px; font-size: 0.8rem; color: var(--p); border: 1px solid var(--p); }
+        
+        /* Main Dashboard */
+        main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px; flex-grow: 1; overflow: hidden; }
+        .panel { background: var(--card); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; border: 1px solid #27272a; }
+        .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        
+        /* File List Styles */
+        .list { flex-grow: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 10px; padding: 10px; }
+        .item { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #27272a; font-size: 0.9rem; }
+        
+        /* Interaction */
+        button { background: var(--p); color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+        button.sec { background: transparent; border: 1px solid #3f3f46; }
+        input[type="text"] { background: #0b0e14; border: 1px solid #3f3f46; color: white; padding: 8px; border-radius: 8px; }
+        
+        /* Progress Overlay */
+        #transfer-status { position: fixed; bottom: 20px; right: 20px; background: var(--p); padding: 15px; border-radius: 12px; display: none; width: 300px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        progress { width: 100%; height: 8px; accent-color: white; }
     </style>
 </head>
 <body>
 
-<div class="glass-card">
-    <div class="status-bar">
-        <span id="conn-count">Disconnected</span>
-        <span class="badge" id="room-id">No Room</span>
+<header>
+    <div style="font-weight: 800; font-size: 1.2rem; color: var(--p);">TITAN P2P</div>
+    <div class="room-nav">
+        <span id="room-display" class="badge">Not Connected</span>
+        <input type="text" id="roomInput" placeholder="Room Name...">
+        <button onclick="switchRoom()">Switch Room</button>
     </div>
+</header>
 
-    <input type="text" id="roomInput" placeholder="Enter Room Name (e.g. MySecretFiles)">
-    
-    <div id="setup-area">
-        <button class="btn btn-p" onclick="initNode()">Enter Room</button>
-    </div>
-
-    <div id="main-area" style="display:none">
-        <input type="file" id="filePicker" multiple style="display:none">
-        <button class="btn btn-p" onclick="document.getElementById('filePicker').click()">➕ Add Files to Room</button>
-        
-        <div class="file-list" id="fileList">
-            </div>
-    </div>
-
-    <div id="transfer-ui" style="display:none; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #334155;">
-        <div style="display:flex; justify-content: space-between; font-size: 0.8rem;">
-            <span id="active-file">...</span>
-            <span id="active-percent">0%</span>
+<main>
+    <div class="panel">
+        <div class="panel-header">
+            <h3>My Shared Files</h3>
+            <button onclick="document.getElementById('filePicker').click()">+ Add File</button>
+            <input type="file" id="filePicker" multiple style="display:none">
         </div>
-        <progress id="progBar" value="0" max="100"></progress>
+        <div id="my-files" class="list"></div>
     </div>
+
+    <div class="panel">
+        <div class="panel-header">
+            <h3>Available to Download</h3>
+            <span id="peer-status" style="font-size: 0.8rem; color: #71717a;">Offline</span>
+        </div>
+        <div id="peer-files" class="list"></div>
+    </div>
+</main>
+
+<div id="transfer-status">
+    <div style="font-size: 0.8rem; margin-bottom: 5px;" id="filename-display">Transferring...</div>
+    <progress id="progBar" value="0" max="100"></progress>
+    <div style="text-align: right; font-size: 0.7rem;" id="percent-display">0%</div>
 </div>
 
 <script>
-    let peer, connections = [], hostedFiles = {};
+    let peer, conn, myFiles = {}, roomName = "";
 
-    function initNode() {
-        const room = document.getElementById('roomInput').value.trim();
-        if (!room) return;
+    // 1. Symmetric Peer Logic
+    async function switchRoom() {
+        roomName = document.getElementById('roomInput').value.trim();
+        if (!roomName) return;
+        window.location.hash = roomName;
+        document.getElementById('room-display').innerText = "Room: " + roomName;
+
+        // Symmetric Discovery: Try to be 'A', if taken, be 'B'
+        if (peer) peer.destroy();
         
-        peer = new Peer("TITAN-" + room);
-        
-        peer.on('open', (id) => {
-            document.getElementById('room-id').innerText = room;
-            document.getElementById('setup-area').style.display = 'none';
-            document.getElementById('main-area').style.display = 'block';
-            document.getElementById('conn-count').innerText = "Waiting for peers...";
+        // We attempt to register as 'A'. If it fails, we catch error and register as 'B'.
+        peer = new Peer("TITAN-" + roomName + "-A");
+
+        peer.on('error', (err) => {
+            if (err.type === 'unavailable-id') {
+                peer = new Peer("TITAN-" + roomName + "-B");
+                setupPeerEvents("TITAN-" + roomName + "-A");
+            }
         });
 
-        // When someone connects to you
-        peer.on('connection', (conn) => {
-            setupConnection(conn);
+        peer.on('open', () => {
+            setupPeerEvents("TITAN-" + roomName + "-B");
         });
-
-        // Auto-connect to existing host if it exists
-        const conn = peer.connect("TITAN-" + room);
-        setupConnection(conn);
     }
 
-    function setupConnection(conn) {
+    function setupPeerEvents(targetID) {
+        peer.on('connection', (c) => handleConnection(c));
+        
+        // Repeatedly try to find the other person in the room
+        const connectLoop = setInterval(() => {
+            if (conn && conn.open) return clearInterval(connectLoop);
+            const c = peer.connect(targetID);
+            handleConnection(c);
+        }, 3000);
+    }
+
+    function handleConnection(c) {
+        conn = c;
         conn.on('open', () => {
-            connections.push(conn);
-            document.getElementById('conn-count').innerText = connections.length + " Peer(s) Connected";
-            
-            // If we have files already, tell the newcomer
-            if (Object.keys(hostedFiles).length > 0) {
-                conn.send({ type: 'manifest', files: Object.values(hostedFiles).map(f => ({name: f.name, size: f.size, id: f.name})) });
-            }
+            document.getElementById('peer-status').innerText = "Connected to Peer";
+            document.getElementById('peer-status').style.color = "#10b981";
+            // Send current manifest to the peer
+            broadcastManifest();
         });
 
-        conn.on('data', (data) => {
-            if (data.type === 'manifest') {
-                displayManifest(data.files, conn);
-            } else if (data.type === 'request') {
-                sendFileToPeer(data.fileID, conn);
-            } else if (data.type === 'meta') {
-                startReceiverStream(data, conn);
-            }
+        conn.on('data', async (data) => {
+            if (data.type === 'manifest') updatePeerList(data.files);
+            if (data.type === 'request') streamFileToPeer(data.name);
+            if (data.type === 'meta') receiveFileStream(data);
+        });
+        
+        conn.on('close', () => {
+            document.getElementById('peer-status').innerText = "Peer Disconnected";
+            document.getElementById('peer-status').style.color = "#ef4444";
         });
     }
 
-    // HOST SIDE: Pick files and announce them
+    // 2. Hosting / Sharing Logic
     document.getElementById('filePicker').onchange = (e) => {
-        const files = e.target.files;
-        for (let f of files) {
-            hostedFiles[f.name] = f;
-            addToFileUI(f.name, (f.size / 1024 / 1024).toFixed(2) + "MB", true);
+        for (let f of e.target.files) {
+            myFiles[f.name] = f;
+            const item = document.createElement('div');
+            item.className = 'item';
+            item.innerHTML = `<span>${f.name}</span><small>${(f.size/1024/1024).toFixed(2)}MB</small>`;
+            document.getElementById('my-files').appendChild(item);
         }
-        // Broadcast new list to everyone
-        const manifest = Object.values(hostedFiles).map(f => ({name: f.name, size: f.size, id: f.name}));
-        connections.forEach(c => c.send({ type: 'manifest', files: manifest }));
+        broadcastManifest();
     };
 
-    function addToFileUI(name, size, isHost) {
-        const item = document.createElement('div');
-        item.className = 'file-item';
-        item.innerHTML = `<span>${name} (${size})</span>` + 
-            (isHost ? `<span style="color:#94a3b8">Hosted</span>` : `<button class="btn-s" onclick="requestDownload('${name}')">Download</button>`);
-        document.getElementById('fileList').appendChild(item);
+    function broadcastManifest() {
+        if (conn && conn.open) {
+            const list = Object.values(myFiles).map(f => ({ name: f.name, size: f.size }));
+            conn.send({ type: 'manifest', files: list });
+        }
     }
 
-    // RECEIVER SIDE: Show what files are available
-    function displayManifest(files, conn) {
-        const list = document.getElementById('fileList');
-        list.innerHTML = "";
+    // 3. Downloading / Request Logic
+    function updatePeerList(files) {
+        const listUI = document.getElementById('peer-files');
+        listUI.innerHTML = "";
         files.forEach(f => {
             const item = document.createElement('div');
-            item.className = 'file-item';
-            item.innerHTML = `<span>${f.name}</span> <button class="btn-s" onclick="requestDownload('${f.name}')">Download</button>`;
-            list.appendChild(item);
+            item.className = 'item';
+            item.innerHTML = `<span>${f.name}</span><button onclick="requestFile('${f.name}')">Download</button>`;
+            listUI.appendChild(item);
         });
     }
 
-    let currentActiveConn; 
-    function requestDownload(name) {
-        // Find which connection has this file (simplification: using first connection)
-        connections[0].send({ type: 'request', fileID: name });
+    function requestFile(name) {
+        conn.send({ type: 'request', name: name });
     }
 
-    async function sendFileToPeer(name, conn) {
-        const file = hostedFiles[name];
+    // 4. Heavy Streaming Logic (1GB+)
+    async function streamFileToPeer(name) {
+        const file = myFiles[name];
         conn.send({ type: 'meta', name: file.name, size: file.size });
         const reader = file.stream().getReader();
         while (true) {
+            if (conn.dataChannel.bufferedAmount > 1000000) {
+                await new Promise(r => setTimeout(r, 50));
+                continue;
+            }
             const { done, value } = await reader.read();
             if (done) break;
             conn.send(value);
         }
     }
 
-    async function startReceiverStream(meta, conn) {
+    async function receiveFileStream(meta) {
         const handle = await window.showSaveFilePicker({ suggestedName: meta.name });
         const writable = await handle.createWritable();
         let received = 0;
-        document.getElementById('transfer-ui').style.display = 'block';
-        document.getElementById('active-file').innerText = meta.name;
+        
+        document.getElementById('transfer-status').style.display = 'block';
+        document.getElementById('filename-display').innerText = "Receiving: " + meta.name;
 
         conn.on('data', async (chunk) => {
-            if (chunk.type) return; // Skip manifest/meta
+            if (chunk.type) return; 
             await writable.write(chunk);
             received += chunk.byteLength;
             const p = Math.floor((received / meta.size) * 100);
             document.getElementById('progBar').value = p;
-            document.getElementById('active-percent').innerText = p + "%";
-            if (received >= meta.size) await writable.close();
+            document.getElementById('percent-display').innerText = p + "%";
+            
+            if (received >= meta.size) {
+                await writable.close();
+                document.getElementById('transfer-status').style.display = 'none';
+            }
         });
+    }
+
+    // Handle Auto-Join via URL Hash
+    if(window.location.hash) {
+        document.getElementById('roomInput').value = window.location.hash.substring(1);
+        switchRoom();
     }
 </script>
 </body>
