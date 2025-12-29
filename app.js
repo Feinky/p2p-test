@@ -1,17 +1,18 @@
 let peer, connections = {}, myFiles = {}, remoteFiles = {};
-const CHUNK_SIZE = 16384; 
+const CHUNK_SIZE = 16384; // 16KB Strict Binary Chunks
 
 async function joinMesh() {
     const room = document.getElementById('roomInput').value.trim();
     if (!room) return;
     if (peer) peer.destroy();
 
+    // 1. Generate unique session ID
     const myId = `TITAN-${room}-${Math.floor(Math.random() * 10000)}`;
     peer = new Peer(myId, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
 
     peer.on('open', () => {
         updateStatus("ONLINE", true);
-        // Discovery Logic
+        // 2. Discover other slots in the mesh
         for(let i=1; i<=5; i++) {
             const t = `TITAN-LOBBY-${room}-${i}`;
             if (peer.id !== t) handleConn(peer.connect(t));
@@ -42,7 +43,12 @@ function handleConn(c) {
         if (data.type === 'req') upload(data.name, c);
         if (data.type === 'meta') download(data, c);
     });
-    c.on('close', () => { delete connections[c.peer]; delete remoteFiles[c.peer]; renderRemote(); });
+    c.on('close', () => { 
+        delete connections[c.peer]; 
+        delete remoteFiles[c.peer]; 
+        renderRemote(); 
+        updateStatus(`MESH: ${Object.keys(connections).length}`, !!Object.keys(connections).length);
+    });
 }
 
 function updateStatus(t, a) {
@@ -51,6 +57,7 @@ function updateStatus(t, a) {
     a ? e.classList.add('active') : e.classList.remove('active');
 }
 
+// --- FILE SELECTION ---
 document.getElementById('fileInput').onchange = (e) => {
     for (let f of e.target.files) {
         myFiles[f.name] = f;
@@ -75,18 +82,27 @@ function renderRemote() {
     });
 }
 
-// --- SEQUENTIAL LOGIC ---
+// --- THE CORE BINARY ENGINE ---
 
 async function upload(name, c) {
     const f = myFiles[name];
     const tid = Math.random().toString(36).substr(2, 5);
-    createRow(tid, name, 'SENDING');
-    c.send({ type: 'meta', name: f.name, size: f.size, tid: tid });
-    
+    createRow(tid, name, 'HASHING...');
+
+    // 1. Generate SHA-256 Checksum
     const buf = await f.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
+    const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    // 2. Send Metadata
+    c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: fileHash });
+    
     let off = 0;
+    document.getElementById(`tag-${tid}`).innerText = "SENDING";
+
     while (off < f.size) {
         if (!c.open) break;
+        // 3. Backpressure: Wait if pipe is full (Prevents corruption/memory loss)
         if (c.dataChannel.bufferedAmount > 1048576) {
             await new Promise(r => setTimeout(r, 50)); 
             continue;
@@ -96,38 +112,64 @@ async function upload(name, c) {
         updateUI(tid, off, f.size);
     }
     
-    // Send EOF only when loop is finished
+    // 4. Sequential EOF Handshake
     if (c.open) setTimeout(() => { c.send({ type: 'eof', tid: tid }); }, 500);
 }
 
 function download(meta, c) {
     createRow(meta.tid, meta.name, 'RECEIVING');
-    let received = 0, chunks = [];
+    let receivedBytes = 0;
+    let chunks = [];
     
-    const handler = (data) => {
+    const handler = async (data) => {
+        // Handle EOF: Finish line
         if (data.type === 'eof' && data.tid === meta.tid) {
-            finalize(meta.tid, meta.name, chunks);
             c.off('data', handler);
+            await finalize(meta.tid, meta.name, chunks, meta.hash);
             return;
         }
-        if (data.type) return;
-        chunks.push(data);
-        received += data.byteLength;
-        updateUI(meta.tid, received, meta.size);
+
+        // Handle raw binary chunks
+        if (data instanceof ArrayBuffer || data instanceof Uint8Array || data.byteLength !== undefined) {
+            chunks.push(data);
+            receivedBytes += data.byteLength;
+            updateUI(meta.tid, receivedBytes, meta.size);
+        }
     };
     c.on('data', handler);
 }
 
-function finalize(tid, name, chunks) {
+async function finalize(tid, name, chunks, expectedHash) {
     const tag = document.getElementById(`tag-${tid}`);
-    tag.innerText = "SAVING...";
+    tag.innerText = "VERIFYING...";
+    
     const blob = new Blob(chunks, { type: 'application/octet-stream' });
+    const actualBuf = await blob.arrayBuffer();
+    
+    // 1. Calculate received hash
+    const hashBuffer = await crypto.subtle.digest('SHA-256', actualBuf);
+    const actualHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    // 2. Integrity Check
+    if (actualHash !== expectedHash) {
+        tag.innerText = "CORRUPT";
+        tag.style.color = "#ff4444";
+        return;
+    }
+
+    // 3. Perfect Match: Save File
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
+    a.href = url;
     a.download = name;
     a.click();
+    
     tag.innerText = "DONE";
+    tag.style.color = "var(--success)";
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
+
+// --- UI UPDATERS ---
 
 function createRow(id, name, type) {
     const html = `<div class="transfer-row" id="row-${id}">
@@ -140,6 +182,8 @@ function createRow(id, name, type) {
 
 function updateUI(id, curr, total) {
     const p = Math.floor((Math.min(curr, total) / total) * 100);
-    if(document.getElementById(`bar-${id}`)) document.getElementById(`bar-${id}`).value = p;
-    if(document.getElementById(`perc-${id}`)) document.getElementById(`perc-${id}`).innerText = p + "%";
+    const bar = document.getElementById(`bar-${id}`);
+    const perc = document.getElementById(`perc-${id}`);
+    if(bar) bar.value = p;
+    if(perc) perc.innerText = p + "%";
 }
