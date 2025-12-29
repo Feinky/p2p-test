@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global P2P Transfer</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: system-ui; background: #1a1a1a; color: white; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .container { background: #2a2a2a; padding: 2rem; border-radius: 20px; text-align: center; width: 350px; border: 1px solid #444; }
+        input { width: 80%; padding: 10px; margin: 10px 0; border-radius: 8px; border: none; }
+        button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        #drop-zone { border: 2px dashed #666; padding: 30px; border-radius: 15px; margin-top: 20px; cursor: pointer; display: none; }
+        .progress-bar { height: 8px; background: #444; border-radius: 4px; margin-top: 15px; overflow: hidden; display: none; }
+        #fill { height: 100%; background: #28a745; width: 0%; transition: 0.1s; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2 id="title">Global P2P</h2>
+    <p id="status">Enter a room name to meet</p>
+    
+    <div id="lobby-ui">
+        <input type="text" id="roomInput" placeholder="Enter Room Name (e.g. secret123)">
+        <button onclick="joinRoom()">Enter Room</button>
+    </div>
+
+    <div id="drop-zone">📤 Drag or Click to Send</div>
+    <input type="file" id="fileInput" style="display:none">
+
+    <div class="progress-bar" id="progBar"><div id="fill"></div></div>
+</div>
+
+<script>
+    let peer, conn;
+    const status = document.getElementById('status');
+    const fill = document.getElementById('fill');
+
+    function joinRoom() {
+        const roomName = document.getElementById('roomInput').value.trim();
+        if (!roomName) return alert("Enter a name!");
+
+        // We use two sub-IDs: one 'host' and one 'joiner'
+        // This lets two people find each other under one name
+        const myId = `${roomName}-${Math.random() > 0.5 ? 'A' : 'B'}`;
+        const otherId = myId.endsWith('-A') ? `${roomName}-B` : `${roomName}-A`;
+
+        peer = new Peer(myId, {
+            config: { 'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }
+        });
+
+        peer.on('open', (id) => {
+            status.innerText = `In room: ${roomName}. Waiting...`;
+            document.getElementById('lobby-ui').style.display = 'none';
+            
+            // Try connecting to the other possible ID in the room
+            const attemptConnect = setInterval(() => {
+                if (conn) return clearInterval(attemptConnect);
+                const c = peer.connect(otherId);
+                setupEvents(c);
+            }, 3000);
+        });
+
+        peer.on('connection', setupEvents);
+    }
+
+    function setupEvents(c) {
+        c.on('open', () => {
+            conn = c;
+            status.innerText = "✅ Connected across internet!";
+            document.getElementById('drop-zone').style.display = 'block';
+        });
+
+        c.on('data', async (data) => {
+            if (data.type === 'meta') {
+                window.meta = data; window.chunks = [];
+                document.getElementById('progBar').style.display = 'block';
+            } else {
+                window.chunks.push(data);
+                const progress = (window.chunks.length * 16384 / window.meta.size) * 100;
+                fill.style.width = progress + "%";
+                if (window.chunks.length * 16384 >= window.meta.size) {
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(new Blob(window.chunks));
+                    a.download = window.meta.name; a.click();
+                    status.innerText = "🎉 File Received!";
+                }
+            }
+        });
+    }
+
+    async function sendFile(file) {
+        if (!conn) return;
+        document.getElementById('progBar').style.display = 'block';
+        conn.send({ type: 'meta', name: file.name, size: file.size });
+
+        const chunkSize = 16384;
+        for (let offset = 0; offset < file.size; offset += chunkSize) {
+            if (conn.dataChannel.bufferedAmount > 1000000) {
+                await new Promise(r => setTimeout(r, 100));
+                offset -= chunkSize; continue;
+            }
+            conn.send(await file.slice(offset, offset + chunkSize).arrayBuffer());
+            fill.style.width = (offset / file.size * 100) + "%";
+        }
+        status.innerText = "✅ Sent!";
+    }
+
+    document.getElementById('drop-zone').onclick = () => document.getElementById('fileInput').click();
+    document.getElementById('fileInput').onchange = (e) => sendFile(e.target.files[0]);
+</script>
+</body>
+</html>
