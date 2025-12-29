@@ -2,83 +2,69 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Titan P2P | Sync Status</title>
+    <title>Titan P2P | Stable Sync</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         :root { --p: #1a9fff; --bg: #0b0e14; --card: #1c1c1e; --text: #ffffff; --success: #4c6b22; }
-        body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; }
-        
-        /* Persistent Header */
-        header { background: #000; padding: 15px 25px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--p); }
-        .room-tag { background: var(--p); padding: 4px 10px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; }
-        
-        /* Dashboard Layout */
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        header { background: #000; padding: 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--p); }
         main { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; flex-grow: 1; background: #2c2c2e; overflow: hidden; }
-        .panel { background: var(--card); padding: 25px; display: flex; flex-direction: column; }
-        .file-list { flex-grow: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 8px; margin-top: 15px; padding: 10px; }
-        
-        /* Transfer Overlay (Steam Bottom Bar) */
-        #monitor { background: #171a21; border-top: 1px solid #333; min-height: 120px; padding: 20px 40px; }
-        .transfer-item { display: grid; grid-template-columns: 120px 1fr 100px; items-center; gap: 20px; margin-bottom: 10px; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 4px; }
-        
-        /* Components */
-        .btn { background: var(--p); color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .btn-green { background: var(--success); }
-        progress { width: 100%; height: 12px; accent-color: var(--p); background: #3d4450; border-radius: 2px; }
-        progress.downloading { accent-color: #4caf50; }
-        .status-tag { font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 3px 6px; border-radius: 3px; width: fit-content; }
+        .panel { background: var(--card); padding: 20px; display: flex; flex-direction: column; overflow: hidden; }
+        .file-list { flex-grow: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 8px; margin-top: 10px; }
+        #monitor { background: #171a21; border-top: 1px solid #333; min-height: 140px; padding: 15px; overflow-y: auto; }
+        .transfer-item { display: grid; grid-template-columns: 100px 1fr 80px; align-items: center; gap: 15px; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 4px; margin-bottom: 5px; }
+        progress { width: 100%; height: 12px; accent-color: var(--p); }
+        .btn { background: var(--p); color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .log-msg { font-size: 0.7rem; color: #888; font-family: monospace; }
     </style>
 </head>
 <body>
 
 <header>
-    <div style="font-size: 1.2rem; font-weight: 900;">TITAN <span style="color:var(--p)">P2P</span></div>
-    <div style="display:flex; gap:10px; align-items:center;">
-        <span id="roomDisplay" class="room-tag">OFFLINE</span>
-        <input type="text" id="roomIn" placeholder="Join Room..." style="background:#2c2c2e; border:none; color:white; padding:8px; border-radius:4px;">
+    <div style="font-weight: 900;">TITAN P2P</div>
+    <div style="display:flex; gap:10px;">
+        <input type="text" id="roomIn" placeholder="Room Name..." style="background:#222; border:1px solid #444; color:white; padding:5px;">
         <button class="btn" onclick="init()">CONNECT</button>
     </div>
 </header>
 
 <main>
     <div class="panel">
-        <h3 style="margin:0">MY LIBRARY</h3>
-        <p style="font-size:0.8rem; color:#8e8e93">Files you are hosting for others</p>
-        <button class="btn btn-green" onclick="document.getElementById('picker').click()">+ ADD FILE</button>
+        <button class="btn" style="background:var(--success)" onclick="document.getElementById('picker').click()">+ ADD FILE</button>
         <input type="file" id="picker" multiple style="display:none">
         <div id="myFiles" class="file-list"></div>
     </div>
     <div class="panel">
-        <h3 style="margin:0">REMOTE LIBRARY</h3>
-        <p style="font-size:0.8rem; color:#8e8e93">Files available to download from peer</p>
         <div id="peerFiles" class="file-list"></div>
+        <div id="logs" class="log-msg" style="margin-top:10px; height: 40px; overflow: hidden;">System Ready...</div>
     </div>
 </main>
 
 <div id="monitor">
-    <div style="color: var(--p); font-size: 0.7rem; font-weight: bold; margin-bottom: 10px; letter-spacing: 1px;">ACTIVE TRANSFERS</div>
     <div id="transferContainer"></div>
 </div>
 
 <script>
     let peer, conn, myFiles = {};
 
+    function log(msg) { document.getElementById('logs').innerText = "> " + msg; }
+
     function init() {
         const room = document.getElementById('roomIn').value.trim();
         if (!room) return;
-        
-        document.getElementById('roomDisplay').innerText = "ROOM: " + room.toUpperCase();
-
         if (peer) peer.destroy();
-        peer = new Peer(`TITAN-${room}-A`, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
+        
+        // Use Google STUN to bypass firewalls
+        const cfg = { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }};
+        peer = new Peer(`TITAN-${room}-A`, cfg);
 
         peer.on('error', (err) => {
             if (err.type === 'unavailable-id') {
-                peer = new Peer(`TITAN-${room}-B`, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
+                peer = new Peer(`TITAN-${room}-B`, cfg);
                 setupPeer(`TITAN-${room}-A`);
-            }
+            } else { log("Error: " + err.type); }
         });
-        peer.on('open', () => setupPeer(`TITAN-${room}-B`));
+        peer.on('open', () => { log("Room Joined"); setupPeer(`TITAN-${room}-B`); });
     }
 
     function setupPeer(target) {
@@ -87,107 +73,94 @@
     }
 
     function handle(c) {
+        if (conn && conn.open) return;
         conn = c;
-        conn.on('open', () => { if(Object.keys(myFiles).length > 0) sync(); });
+        conn.on('open', () => { log("Peer Connected"); sync(); });
         conn.on('data', data => {
             if (data.type === 'list') renderPeerFiles(data.files);
             if (data.type === 'req') startUpload(data.name);
             if (data.type === 'meta') startDownload(data);
-            if (data.type === 'complete-ack') {
-                document.getElementById(`tag-${data.id}`).innerText = "FINISHED";
-                document.getElementById(`tag-${data.id}`).style.background = "#4c6b22";
-            }
+            if (data.type === 'ack') log("Peer received: " + data.name);
         });
     }
 
-    // --- FILE MGMT ---
     document.getElementById('picker').onchange = (e) => {
         for (let f of e.target.files) {
             myFiles[f.name] = f;
-            document.getElementById('myFiles').innerHTML += `<div style="padding:10px; border-bottom:1px solid #333">${f.name}</div>`;
+            document.getElementById('myFiles').innerHTML += `<div style="padding:8px; border-bottom:1px solid #333">${f.name}</div>`;
         }
         sync();
     };
 
-    function sync() {
-        if (conn?.open) {
-            const list = Object.values(myFiles).map(f => ({ name: f.name, size: f.size }));
-            conn.send({ type: 'list', files: list });
-        }
-    }
+    function sync() { if (conn?.open) conn.send({ type: 'list', files: Object.values(myFiles).map(f => ({ name: f.name, size: f.size })) }); }
 
     function renderPeerFiles(files) {
-        const ui = document.getElementById('peerFiles');
-        ui.innerHTML = "";
+        const ui = document.getElementById('peerFiles'); ui.innerHTML = "";
         files.forEach(f => {
             const row = document.createElement('div');
-            row.style = "display:flex; justify-content:space-between; padding:10px; border-bottom:1px solid #333";
-            row.innerHTML = `<span>${f.name}</span> <button class="btn" style="padding:4px 8px; font-size:0.7rem" onclick="conn.send({type:'req', name:'${f.name}'})">DOWNLOAD</button>`;
+            row.style = "display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid #333";
+            row.innerHTML = `<span>${f.name}</span> <button class="btn" style="padding:2px 8px; font-size:0.7rem" onclick="conn.send({type:'req', name:'${f.name}'})">GET</button>`;
             ui.appendChild(row);
         });
     }
 
-    // --- THE SYNCED PROGRESS LOGIC ---
-
+    // --- FIXED UPLOAD WITH BACKPRESSURE ---
     async function startUpload(name) {
         const file = myFiles[name];
         const tid = Math.random().toString(36).substr(2, 5);
-        createRow(tid, file.name, 'uploading');
+        createRow(tid, file.name, 'UPLOADING');
         
         conn.send({ type: 'meta', name: file.name, size: file.size, tid: tid });
 
         const reader = file.stream().getReader();
         let sent = 0;
         while (true) {
+            // BACKPRESSURE: If outgoing buffer is > 1MB, wait!
+            if (conn.dataChannel.bufferedAmount > 1000000) {
+                await new Promise(r => setTimeout(r, 40)); 
+                continue;
+            }
             const { done, value } = await reader.read();
             if (done) break;
             conn.send(value);
             sent += value.length;
             updateUI(tid, sent, file.size);
         }
-        // Wait for receiver to confirm they "unpacked" it
     }
 
+    // --- FIXED DOWNLOAD ---
     function startDownload(meta) {
-        createRow(meta.tid, meta.name, 'downloading');
+        createRow(meta.tid, meta.name, 'RECEIVING');
         let received = 0;
         let packages = [];
 
-        const handler = (pkg) => {
-            if (pkg.type) return; 
-            packages.push(pkg);
-            received += pkg.byteLength;
+        const onData = (data) => {
+            if (data.type) return; 
+            packages.push(data);
+            received += data.byteLength;
             updateUI(meta.tid, received, meta.size);
 
             if (received >= meta.size) {
-                conn.off('data', handler);
+                conn.off('data', onData); // Stop listening to file chunks
                 const blob = new Blob(packages);
-                const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
-                a.href = url; a.download = meta.name; a.click();
-                
-                // Finish UI
-                document.getElementById(`tag-${meta.tid}`).innerText = "SAVED";
-                document.getElementById(`tag-${meta.tid}`).style.background = "#4c6b22";
-                
-                // SEND ACK BACK TO SENDER
-                conn.send({ type: 'complete-ack', id: meta.tid });
+                a.href = URL.createObjectURL(blob);
+                a.download = meta.name;
+                a.click();
+                document.getElementById(`tag-${meta.tid}`).innerText = "COMPLETE";
+                conn.send({ type: 'ack', name: meta.name });
             }
         };
-        conn.on('data', handler);
+        conn.on('data', onData);
     }
 
     function createRow(id, name, type) {
         const container = document.getElementById('transferContainer');
-        const color = type === 'uploading' ? '#1a9fff' : '#4caf50';
         container.innerHTML = `
             <div class="transfer-item" id="row-${id}">
-                <div>
-                    <div id="tag-${id}" class="status-tag" style="background:${color}">${type}</div>
-                    <div style="font-size:11px; margin-top:5px; white-space:nowrap; overflow:hidden;">${name}</div>
-                </div>
-                <progress id="bar-${id}" class="${type}" value="0" max="100"></progress>
-                <div id="perc-${id}" style="font-size:12px; text-align:right; font-weight:bold;">0%</div>
+                <div id="tag-${id}" style="font-size:10px; font-weight:bold; color:var(--p)">${type}</div>
+                <progress id="bar-${id}" value="0" max="100"></progress>
+                <div id="perc-${id}" style="font-size:11px; text-align:right;">0%</div>
             </div>
         ` + container.innerHTML;
     }
