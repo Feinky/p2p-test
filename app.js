@@ -1,15 +1,52 @@
 let peer, connections = {}, myFiles = {}, remoteFiles = {};
 const CHUNK_SIZE = 16384; 
 
-async function joinMesh() {
+function joinMesh() {
     const room = document.getElementById('roomInput').value.trim();
     if (!room) return;
-    const myId = `TITAN-${room}-${Math.floor(Math.random() * 10000)}`;
-    peer = new Peer(myId, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
-    peer.on('open', () => { updateStatus("ONLINE", true); discover(room); });
-    peer.on('connection', c => handleConn(c));
+    if (peer) peer.destroy();
+    
+    // Start by trying to claim "Slot 1"
+    joinSlot(room, 1);
 }
 
+function joinSlot(room, slot) {
+    if (slot > 5) {
+        // If slots 1-5 are full, just be a random "Observer"
+        initPeer(`TITAN-${room}-OBSERVER-${Math.floor(Math.random()*1000)}`, room);
+        return;
+    }
+
+    // Try to become this specific slot (e.g., TITAN-LOBBY-apple-1)
+    const targetId = `TITAN-LOBBY-${room}-${slot}`;
+    const tempPeer = new Peer(targetId, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
+
+    tempPeer.on('open', () => {
+        // SUCCESS: We claimed the slot!
+        peer = tempPeer;
+        initPeer(targetId, room);
+    });
+
+    tempPeer.on('error', (err) => {
+        // FAIL: Slot is taken. Try the next one (Slot 2, Slot 3...)
+        if (err.type === 'unavailable-id') {
+            joinSlot(room, slot + 1);
+        } else {
+            console.error(err);
+        }
+    });
+}
+function initPeer(id, room) {
+    updateStatus(`ID: ${id.split('-').pop()}`, true); // Show "ID: 1" or "ID: 2"
+    
+    // Connect to all other possible slots (Mesh)
+    for(let i=1; i<=5; i++) {
+        const target = `TITAN-LOBBY-${room}-${i}`;
+        if (id !== target) handleConn(peer.connect(target));
+    }
+
+    peer.on('connection', c => handleConn(c));
+}
 function discover(room) {
     for(let i=1; i<=5; i++) {
         const t = `TITAN-LOBBY-${room}-${i}`;
@@ -154,3 +191,4 @@ function updateStatus(t, a) {
     e.innerText = t;
     a ? e.classList.add('active') : e.classList.remove('active');
 }
+
