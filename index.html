@@ -1,114 +1,115 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global P2P Transfer</title>
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <title>IPFS P2P Room Storage</title>
+    <script type="module">
+        // Importing Helia (Modern IPFS for Browser)
+        import { createHelia } from 'https://esm.sh/helia';
+        import { unixfs } from 'https://esm.sh/@helia/unixfs';
+        import { strings } from 'https://esm.sh/@helia/strings';
+
+        let helia, fs, s;
+        const fileList = document.getElementById('fileList');
+        const status = document.getElementById('status');
+
+        async function initIPFS() {
+            status.innerText = "🌀 Booting IPFS Node...";
+            helia = await createHelia();
+            fs = unixfs(helia);
+            s = strings(helia);
+            
+            status.innerText = "🌐 Node Online. Waiting for files...";
+            setupRoom();
+        }
+
+        // 1. Room Logic (PubSub)
+        // Note: For a true room without a server, we use a specific 'topic'
+        const topic = window.location.hash || "#global-lobby";
+
+        async function setupRoom() {
+            // We subscribe to the room topic
+            await helia.libp2p.services.pubsub.subscribe(topic);
+            
+            helia.libp2p.services.pubsub.addEventListener('message', (evt) => {
+                const data = JSON.parse(new TextDecoder().decode(evt.detail.data));
+                addFileToList(data.name, data.cid, data.size);
+            });
+        }
+
+        // 2. Upload to IPFS
+        window.uploadFile = async () => {
+            const file = document.getElementById('fileInput').files[0];
+            if (!file) return;
+
+            status.innerText = "📤 Uploading to IPFS Network...";
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            const cid = await fs.addBytes(bytes);
+
+            const fileData = {
+                name: file.name,
+                cid: cid.toString(),
+                size: (file.size / 1024 / 1024).toFixed(2) + " MB"
+            };
+
+            // Broadcast the file info to everyone in the room
+            const msg = new TextEncoder().encode(JSON.stringify(fileData));
+            await helia.libp2p.services.pubsub.publish(topic, msg);
+
+            addFileToList(fileData.name, fileData.cid, fileData.size);
+            status.innerText = "✅ File Broadcasted!";
+        };
+
+        // 3. Download from IPFS
+        window.downloadFile = async (cid, name) => {
+            status.innerText = "📥 Fetching from IPFS peers...";
+            const chunks = [];
+            for await (const chunk of fs.cat(cid)) {
+                chunks.push(chunk);
+            }
+            const blob = new Blob(chunks);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = name;
+            a.click();
+            status.innerText = "🎉 Download Complete!";
+        };
+
+        function addFileToList(name, cid, size) {
+            // Check if already in list
+            if (document.getElementById(cid)) return;
+
+            const li = document.createElement('li');
+            li.id = cid;
+            li.innerHTML = `
+                <strong>${name}</strong> (${size}) <br>
+                <small>${cid}</small> <br>
+                <button onclick="downloadFile('${cid}', '${name}')">Download</button>
+                <hr>
+            `;
+            fileList.appendChild(li);
+        }
+
+        initIPFS();
+    </script>
     <style>
-        body { font-family: system-ui; background: #1a1a1a; color: white; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .container { background: #2a2a2a; padding: 2rem; border-radius: 20px; text-align: center; width: 350px; border: 1px solid #444; }
-        input { width: 80%; padding: 10px; margin: 10px 0; border-radius: 8px; border: none; }
-        button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
-        #drop-zone { border: 2px dashed #666; padding: 30px; border-radius: 15px; margin-top: 20px; cursor: pointer; display: none; }
-        .progress-bar { height: 8px; background: #444; border-radius: 4px; margin-top: 15px; overflow: hidden; display: none; }
-        #fill { height: 100%; background: #28a745; width: 0%; transition: 0.1s; }
+        body { font-family: sans-serif; max-width: 500px; margin: auto; padding: 20px; background: #f4f4f4; }
+        .box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        #fileList { list-style: none; padding: 0; margin-top: 20px; }
+        button { background: #007bff; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
+        #status { font-size: 0.8rem; color: #666; margin-bottom: 10px; }
     </style>
 </head>
 <body>
+    <div class="box">
+        <h2>📦 IPFS Room</h2>
+        <div id="status">Loading libraries...</div>
+        
+        <input type="file" id="fileInput">
+        <button onclick="uploadFile()">Upload & Share</button>
 
-<div class="container">
-    <h2 id="title">Global P2P</h2>
-    <p id="status">Enter a room name to meet</p>
-    
-    <div id="lobby-ui">
-        <input type="text" id="roomInput" placeholder="Enter Room Name (e.g. secret123)">
-        <button onclick="joinRoom()">Enter Room</button>
+        <h3>Available Files</h3>
+        <ul id="fileList"></ul>
     </div>
-
-    <div id="drop-zone">📤 Drag or Click to Send</div>
-    <input type="file" id="fileInput" style="display:none">
-
-    <div class="progress-bar" id="progBar"><div id="fill"></div></div>
-</div>
-
-<script>
-    let peer, conn;
-    const status = document.getElementById('status');
-    const fill = document.getElementById('fill');
-
-    function joinRoom() {
-        const roomName = document.getElementById('roomInput').value.trim();
-        if (!roomName) return alert("Enter a name!");
-
-        // We use two sub-IDs: one 'host' and one 'joiner'
-        // This lets two people find each other under one name
-        const myId = `${roomName}-${Math.random() > 0.5 ? 'A' : 'B'}`;
-        const otherId = myId.endsWith('-A') ? `${roomName}-B` : `${roomName}-A`;
-
-        peer = new Peer(myId, {
-            config: { 'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }
-        });
-
-        peer.on('open', (id) => {
-            status.innerText = `In room: ${roomName}. Waiting...`;
-            document.getElementById('lobby-ui').style.display = 'none';
-            
-            // Try connecting to the other possible ID in the room
-            const attemptConnect = setInterval(() => {
-                if (conn) return clearInterval(attemptConnect);
-                const c = peer.connect(otherId);
-                setupEvents(c);
-            }, 3000);
-        });
-
-        peer.on('connection', setupEvents);
-    }
-
-    function setupEvents(c) {
-        c.on('open', () => {
-            conn = c;
-            status.innerText = "✅ Connected across internet!";
-            document.getElementById('drop-zone').style.display = 'block';
-        });
-
-        c.on('data', async (data) => {
-            if (data.type === 'meta') {
-                window.meta = data; window.chunks = [];
-                document.getElementById('progBar').style.display = 'block';
-            } else {
-                window.chunks.push(data);
-                const progress = (window.chunks.length * 16384 / window.meta.size) * 100;
-                fill.style.width = progress + "%";
-                if (window.chunks.length * 16384 >= window.meta.size) {
-                    const a = document.createElement('a');
-                    a.href = URL.createObjectURL(new Blob(window.chunks));
-                    a.download = window.meta.name; a.click();
-                    status.innerText = "🎉 File Received!";
-                }
-            }
-        });
-    }
-
-    async function sendFile(file) {
-        if (!conn) return;
-        document.getElementById('progBar').style.display = 'block';
-        conn.send({ type: 'meta', name: file.name, size: file.size });
-
-        const chunkSize = 16384;
-        for (let offset = 0; offset < file.size; offset += chunkSize) {
-            if (conn.dataChannel.bufferedAmount > 1000000) {
-                await new Promise(r => setTimeout(r, 100));
-                offset -= chunkSize; continue;
-            }
-            conn.send(await file.slice(offset, offset + chunkSize).arrayBuffer());
-            fill.style.width = (offset / file.size * 100) + "%";
-        }
-        status.innerText = "✅ Sent!";
-    }
-
-    document.getElementById('drop-zone').onclick = () => document.getElementById('fileInput').click();
-    document.getElementById('fileInput').onchange = (e) => sendFile(e.target.files[0]);
-</script>
 </body>
 </html>
