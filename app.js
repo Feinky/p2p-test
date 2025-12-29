@@ -122,14 +122,13 @@ function download(meta, c) {
     let chunks = [];
     
     const handler = async (data) => {
-        // Handle EOF: Finish line
         if (data.type === 'eof' && data.tid === meta.tid) {
             c.off('data', handler);
-            await finalize(meta.tid, meta.name, chunks, meta.hash);
+            // NOW PASSING 'c' (the connection) TO FINALIZE
+            await finalize(meta.tid, meta.name, chunks, meta.hash, c);
             return;
         }
 
-        // Handle raw binary chunks
         if (data instanceof ArrayBuffer || data instanceof Uint8Array || data.byteLength !== undefined) {
             chunks.push(data);
             receivedBytes += data.byteLength;
@@ -138,26 +137,30 @@ function download(meta, c) {
     };
     c.on('data', handler);
 }
+    c.on('data', handler);
+}
 
-async function finalize(tid, name, chunks, expectedHash) {
+async function finalize(tid, name, chunks, expectedHash, c) {
     const tag = document.getElementById(`tag-${tid}`);
     tag.innerText = "VERIFYING...";
     
     const blob = new Blob(chunks, { type: 'application/octet-stream' });
     const actualBuf = await blob.arrayBuffer();
-    
-    // 1. Calculate received hash
     const hashBuffer = await crypto.subtle.digest('SHA-256', actualBuf);
     const actualHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 
-    // 2. Integrity Check
     if (actualHash !== expectedHash) {
-        tag.innerText = "CORRUPT";
-        tag.style.color = "#ff4444";
+        tag.innerText = "CORRUPT: RETRYING...";
+        tag.style.color = "#ffbb00";
+        
+        // --- THE AUTO-RETRY ---
+        // We use the 'c' we passed in to yell back to the sender
+        setTimeout(() => {
+            c.send({ type: 'req', name: name });
+        }, 1000); // 1 second delay so the user sees the "Corrupt" status first
         return;
     }
 
-    // 3. Perfect Match: Save File
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -168,7 +171,6 @@ async function finalize(tid, name, chunks, expectedHash) {
     tag.style.color = "var(--success)";
     setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
-
 // --- UI UPDATERS ---
 
 function createRow(id, name, type) {
@@ -187,3 +189,4 @@ function updateUI(id, curr, total) {
     if(bar) bar.value = p;
     if(perc) perc.innerText = p + "%";
 }
+
