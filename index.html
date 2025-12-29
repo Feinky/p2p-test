@@ -2,210 +2,201 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Titan P2P Dashboard</title>
+    <title>Titan P2P | Steam Style</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        :root { --p: #6366f1; --bg: #0b0e14; --card: #18181b; --text: #f4f4f5; }
-        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        :root { --p: #1a9fff; --bg: #171a21; --card: #1b2838; --text: #c7d5e0; --success: #4c6b22; }
+        body { font-family: "Motiva Sans", Sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
-        /* Persistent Header */
-        header { background: var(--card); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #27272a; }
-        .room-nav { display: flex; gap: 10px; align-items: center; }
-        .badge { background: #27272a; padding: 5px 12px; border-radius: 15px; font-size: 0.8rem; color: var(--p); border: 1px solid var(--p); }
+        /* Header */
+        header { background: #000; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--p); }
+        .room-controls { display: flex; gap: 10px; }
+        input { background: #32353c; border: none; color: white; padding: 8px; border-radius: 4px; }
         
-        /* Main Dashboard */
-        main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px; flex-grow: 1; overflow: hidden; }
-        .panel { background: var(--card); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; border: 1px solid #27272a; }
-        .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        /* Layout */
+        main { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; flex-grow: 1; background: #000; overflow: hidden; }
+        .panel { background: var(--card); padding: 20px; display: flex; flex-direction: column; }
+        .list { flex-grow: 1; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 4px; }
+        .item { display: flex; justify-content: space-between; align-items: center; padding: 12px; background: rgba(255,255,255,0.05); margin-bottom: 5px; border-radius: 4px; }
+
+        /* Transfer Manager (Steam Style) */
+        #transfer-manager { background: #171a21; border-top: 1px solid #333; height: 180px; padding: 15px 30px; display: flex; flex-direction: column; gap: 10px; }
+        .transfer-row { display: grid; grid-template-columns: 150px 1fr 100px; align-items: center; gap: 20px; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 4px; }
+        .type-tag { font-size: 10px; font-weight: bold; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; width: fit-content; }
+        .up { background: var(--p); color: white; }
+        .down { background: var(--success); color: white; }
         
-        /* File List Styles */
-        .list { flex-grow: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 10px; padding: 10px; }
-        .item { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #27272a; font-size: 0.9rem; }
-        
-        /* Interaction */
-        button { background: var(--p); color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; }
-        button.sec { background: transparent; border: 1px solid #3f3f46; }
-        input[type="text"] { background: #0b0e14; border: 1px solid #3f3f46; color: white; padding: 8px; border-radius: 8px; }
-        
-        /* Progress Overlay */
-        #transfer-status { position: fixed; bottom: 20px; right: 20px; background: var(--p); padding: 15px; border-radius: 12px; display: none; width: 300px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-        progress { width: 100%; height: 8px; accent-color: white; }
+        progress { width: 100%; height: 12px; accent-color: var(--p); background: #3d4450; border: none; border-radius: 2px; }
+        button { background: #3d4450; color: #fff; border: none; padding: 8px 15px; border-radius: 2px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        button:hover { background: var(--p); }
+        .btn-add { background: var(--success); }
     </style>
 </head>
 <body>
 
 <header>
-    <div style="font-weight: 800; font-size: 1.2rem; color: var(--p);">TITAN P2P</div>
-    <div class="room-nav">
-        <span id="room-display" class="badge">Not Connected</span>
-        <input type="text" id="roomInput" placeholder="Room Name...">
-        <button onclick="switchRoom()">Switch Room</button>
+    <div style="font-size: 1.5rem; font-weight: bold; letter-spacing: 2px;">TITAN <span style="color:var(--p)">P2P</span></div>
+    <div class="room-controls">
+        <input type="text" id="roomInput" placeholder="Room ID...">
+        <button onclick="joinRoom()">SWITCH ROOM</button>
     </div>
 </header>
 
 <main>
     <div class="panel">
-        <div class="panel-header">
-            <h3>My Shared Files</h3>
-            <button onclick="document.getElementById('filePicker').click()">+ Add File</button>
-            <input type="file" id="filePicker" multiple style="display:none">
-        </div>
-        <div id="my-files" class="list"></div>
+        <h3>LIBRARY (MY FILES)</h3>
+        <button class="btn-add" onclick="document.getElementById('filePicker').click()">+ ADD FILE TO ROOM</button>
+        <input type="file" id="filePicker" multiple style="display:none">
+        <div id="my-files" class="list" style="margin-top:15px"></div>
     </div>
-
     <div class="panel">
-        <div class="panel-header">
-            <h3>Available to Download</h3>
-            <span id="peer-status" style="font-size: 0.8rem; color: #71717a;">Offline</span>
-        </div>
+        <h3>REMOTE (PEER FILES)</h3>
         <div id="peer-files" class="list"></div>
     </div>
 </main>
 
-<div id="transfer-status">
-    <div style="font-size: 0.8rem; margin-bottom: 5px;" id="filename-display">Transferring...</div>
-    <progress id="progBar" value="0" max="100"></progress>
-    <div style="text-align: right; font-size: 0.7rem;" id="percent-display">0%</div>
+<div id="transfer-manager">
+    <div style="font-weight: bold; color: #66c0f4; font-size: 0.8rem; letter-spacing: 1px;">ACTIVE TRANSFERS</div>
+    <div id="transfer-list" style="overflow-y: auto;">
+        </div>
 </div>
 
 <script>
-    let peer, conn, myFiles = {}, roomName = "";
+    let peer, conn, myFiles = {}, roomID = "";
 
-    // 1. Symmetric Peer Logic
-    async function switchRoom() {
-        roomName = document.getElementById('roomInput').value.trim();
-        if (!roomName) return;
-        window.location.hash = roomName;
-        document.getElementById('room-display').innerText = "Room: " + roomName;
+    function joinRoom() {
+        roomID = document.getElementById('roomInput').value.trim();
+        if (!roomID) return;
+        window.location.hash = roomID;
 
-        // Symmetric Discovery: Try to be 'A', if taken, be 'B'
         if (peer) peer.destroy();
         
-        // We attempt to register as 'A'. If it fails, we catch error and register as 'B'.
-        peer = new Peer("TITAN-" + roomName + "-A");
-
+        // Symmetric logic: try A, fallback to B
+        peer = new Peer(`TITAN-GIGA-${roomID}-A`);
         peer.on('error', (err) => {
             if (err.type === 'unavailable-id') {
-                peer = new Peer("TITAN-" + roomName + "-B");
-                setupPeerEvents("TITAN-" + roomName + "-A");
+                peer = new Peer(`TITAN-GIGA-${roomID}-B`);
+                setupEvents(`TITAN-GIGA-${roomID}-A`);
             }
         });
-
-        peer.on('open', () => {
-            setupPeerEvents("TITAN-" + roomName + "-B");
-        });
+        peer.on('open', () => setupEvents(`TITAN-GIGA-${roomID}-B`));
     }
 
-    function setupPeerEvents(targetID) {
-        peer.on('connection', (c) => handleConnection(c));
-        
-        // Repeatedly try to find the other person in the room
-        const connectLoop = setInterval(() => {
-            if (conn && conn.open) return clearInterval(connectLoop);
-            const c = peer.connect(targetID);
-            handleConnection(c);
+    function setupEvents(target) {
+        peer.on('connection', c => handleConn(c));
+        const retry = setInterval(() => {
+            if (conn && conn.open) return clearInterval(retry);
+            handleConn(peer.connect(target));
         }, 3000);
     }
 
-    function handleConnection(c) {
+    function handleConn(c) {
         conn = c;
-        conn.on('open', () => {
-            document.getElementById('peer-status').innerText = "Connected to Peer";
-            document.getElementById('peer-status').style.color = "#10b981";
-            // Send current manifest to the peer
-            broadcastManifest();
-        });
-
-        conn.on('data', async (data) => {
-            if (data.type === 'manifest') updatePeerList(data.files);
-            if (data.type === 'request') streamFileToPeer(data.name);
-            if (data.type === 'meta') receiveFileStream(data);
-        });
-        
-        conn.on('close', () => {
-            document.getElementById('peer-status').innerText = "Peer Disconnected";
-            document.getElementById('peer-status').style.color = "#ef4444";
+        conn.on('open', () => broadcastManifest());
+        conn.on('data', data => {
+            if (data.type === 'manifest') updatePeerUI(data.files);
+            if (data.type === 'request') startUpload(data.name);
+            if (data.type === 'meta') startDownload(data);
         });
     }
 
-    // 2. Hosting / Sharing Logic
+    // --- LOGIC ---
     document.getElementById('filePicker').onchange = (e) => {
         for (let f of e.target.files) {
             myFiles[f.name] = f;
-            const item = document.createElement('div');
-            item.className = 'item';
-            item.innerHTML = `<span>${f.name}</span><small>${(f.size/1024/1024).toFixed(2)}MB</small>`;
-            document.getElementById('my-files').appendChild(item);
+            const div = document.createElement('div');
+            div.className = 'item';
+            div.innerHTML = `<span>${f.name}</span><small>${(f.size/1e6).toFixed(1)}MB</small>`;
+            document.getElementById('my-files').appendChild(div);
         }
         broadcastManifest();
     };
 
     function broadcastManifest() {
-        if (conn && conn.open) {
+        if (conn?.open) {
             const list = Object.values(myFiles).map(f => ({ name: f.name, size: f.size }));
             conn.send({ type: 'manifest', files: list });
         }
     }
 
-    // 3. Downloading / Request Logic
-    function updatePeerList(files) {
-        const listUI = document.getElementById('peer-files');
-        listUI.innerHTML = "";
+    function updatePeerUI(files) {
+        const ui = document.getElementById('peer-files');
+        ui.innerHTML = "";
         files.forEach(f => {
-            const item = document.createElement('div');
-            item.className = 'item';
-            item.innerHTML = `<span>${f.name}</span><button onclick="requestFile('${f.name}')">Download</button>`;
-            listUI.appendChild(item);
+            const div = document.createElement('div');
+            div.className = 'item';
+            div.innerHTML = `<span>${f.name}</span><button onclick="conn.send({type:'request', name:'${f.name}'})">DOWNLOAD</button>`;
+            ui.appendChild(div);
         });
     }
 
-    function requestFile(name) {
-        conn.send({ type: 'request', name: name });
+    // --- STEAM-STYLE UI UPDATER ---
+    function createTransferRow(id, name, type) {
+        const row = document.createElement('div');
+        row.id = `row-${id}`;
+        row.className = 'transfer-row';
+        row.innerHTML = `
+            <div>
+                <div class="type-tag ${type}">${type}ING</div>
+                <div style="font-size:11px; margin-top:4px; overflow:hidden; white-space:nowrap;">${name}</div>
+            </div>
+            <progress id="prog-${id}" value="0" max="100"></progress>
+            <div id="perc-${id}" style="font-size:12px; text-align:right;">0%</div>
+        `;
+        document.getElementById('transfer-list').prepend(row);
+        return row;
     }
 
-    // 4. Heavy Streaming Logic (1GB+)
-    async function streamFileToPeer(name) {
+    async function startUpload(name) {
         const file = myFiles[name];
+        const id = Math.random().toString(36).substr(2, 5);
+        createTransferRow(id, name, 'upload');
+        
         conn.send({ type: 'meta', name: file.name, size: file.size });
         const reader = file.stream().getReader();
+        let sent = 0;
+        
         while (true) {
-            if (conn.dataChannel.bufferedAmount > 1000000) {
-                await new Promise(r => setTimeout(r, 50));
-                continue;
-            }
+            if (conn.dataChannel.bufferedAmount > 1e6) { await new Promise(r => setTimeout(r, 50)); continue; }
             const { done, value } = await reader.read();
             if (done) break;
             conn.send(value);
+            sent += value.length;
+            updateProgress(id, sent, file.size);
         }
+        document.getElementById(`row-${id}`).style.opacity = "0.5";
     }
 
-    async function receiveFileStream(meta) {
+    async function startDownload(meta) {
         const handle = await window.showSaveFilePicker({ suggestedName: meta.name });
         const writable = await handle.createWritable();
-        let received = 0;
-        
-        document.getElementById('transfer-status').style.display = 'block';
-        document.getElementById('filename-display').innerText = "Receiving: " + meta.name;
+        const id = Math.random().toString(36).substr(2, 5);
+        createTransferRow(id, meta.name, 'download');
 
+        let received = 0;
         conn.on('data', async (chunk) => {
-            if (chunk.type) return; 
+            if (chunk.type) return;
             await writable.write(chunk);
             received += chunk.byteLength;
-            const p = Math.floor((received / meta.size) * 100);
-            document.getElementById('progBar').value = p;
-            document.getElementById('percent-display').innerText = p + "%";
-            
+            updateProgress(id, received, meta.size);
             if (received >= meta.size) {
                 await writable.close();
-                document.getElementById('transfer-status').style.display = 'none';
+                document.getElementById(`row-${id}`).style.opacity = "0.5";
             }
         });
     }
 
-    // Handle Auto-Join via URL Hash
+    function updateProgress(id, curr, total) {
+        const p = Math.floor((curr / total) * 100);
+        const bar = document.getElementById(`prog-${id}`);
+        const text = document.getElementById(`perc-${id}`);
+        if(bar) bar.value = p;
+        if(text) text.innerText = p + "%";
+    }
+
     if(window.location.hash) {
         document.getElementById('roomInput').value = window.location.hash.substring(1);
-        switchRoom();
+        joinRoom();
     }
 </script>
 </body>
