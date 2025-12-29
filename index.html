@@ -2,133 +2,178 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Titan P2P | Final Pro</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Titan P2P | Master Build</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        :root { --p: #1a9fff; --bg: #0b0e14; --card: #1c1c1e; --text: #ffffff; --success: #4c6b22; }
-        body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        :root { --p: #1a9fff; --bg: #0b0e14; --card: #1c1c1e; --text: #ffffff; --success: #4c6b22; --border: #333; }
+        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
-        /* Header */
-        header { background: #000; padding: 15px 25px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--p); }
-        .room-tag { background: var(--p); padding: 4px 10px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; }
+        /* Header & Navigation */
+        header { background: #000; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--p); z-index: 10; }
+        .room-controls { display: flex; gap: 8px; align-items: center; }
+        .status-badge { font-size: 0.7rem; padding: 4px 8px; border-radius: 4px; font-weight: 800; background: #333; color: #888; }
+        .status-online { background: var(--success); color: white; }
+        input[type="text"] { background: #222; border: 1px solid var(--border); color: white; padding: 8px; border-radius: 4px; font-size: 0.9rem; }
         
-        /* Main Layout */
-        main { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; flex-grow: 1; background: #2c2c2e; overflow: hidden; }
-        .panel { background: var(--card); padding: 25px; display: flex; flex-direction: column; }
-        .file-list { flex-grow: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 8px; margin-top: 15px; padding: 10px; }
+        /* Dashboard */
+        main { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; flex-grow: 1; background: var(--border); overflow: hidden; }
+        .panel { background: var(--card); padding: 20px; display: flex; flex-direction: column; overflow: hidden; }
+        .panel-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .file-list { flex-grow: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 6px; padding: 10px; border: 1px solid rgba(255,255,255,0.05); }
         
-        /* Transfer Manager (Steam Style) */
-        #monitor { background: #171a21; border-top: 1px solid #333; height: 160px; padding: 15px 30px; overflow-y: auto; }
-        .transfer-row { display: grid; grid-template-columns: 120px 1fr 80px; align-items: center; gap: 15px; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 4px; margin-bottom: 5px; }
+        /* File Items */
+        .file-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; background: rgba(255,255,255,0.03); margin-bottom: 6px; border-radius: 4px; font-size: 0.85rem; border: 1px solid transparent; }
+        .file-item:hover { border-color: var(--p); }
+
+        /* Progress Manager (Steam Style) */
+        #monitor { background: #171a21; border-top: 1px solid var(--border); height: 180px; padding: 15px 25px; overflow-y: auto; box-shadow: 0 -5px 20px rgba(0,0,0,0.5); }
+        .transfer-row { display: grid; grid-template-columns: 100px 1fr 80px; align-items: center; gap: 20px; background: rgba(255,255,255,0.02); padding: 10px; border-radius: 4px; margin-bottom: 8px; border-left: 3px solid var(--p); }
+        .downloading-row { border-left-color: var(--success); }
         
-        /* Interactive Elements */
-        .btn { background: var(--p); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .btn-green { background: var(--success); }
-        progress { width: 100%; height: 10px; accent-color: var(--p); background: #3d4450; border-radius: 2px; border: none; }
-        .type-tag { font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 3px 6px; border-radius: 3px; width: fit-content; }
+        /* UI Components */
+        .btn { background: var(--p); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 700; font-size: 0.8rem; transition: 0.2s; }
+        .btn:hover { filter: brightness(1.2); }
+        .btn-add { background: var(--success); }
+        progress { width: 100%; height: 10px; accent-color: var(--p); background: #3d4450; border: none; border-radius: 2px; }
+        .dl-bar { accent-color: var(--success); }
+        .type-label { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; }
+
+        @media (max-width: 600px) { main { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
 
 <header>
-    <div style="font-size: 1.2rem; font-weight: 900;">TITAN <span style="color:var(--p)">P2P</span></div>
-    <div style="display:flex; gap:10px; align-items:center;">
-        <span id="roomStatus" class="room-tag">OFFLINE</span>
-        <input type="text" id="roomInput" placeholder="Room Name..." style="background:#2c2c2e; border:none; color:white; padding:8px; border-radius:4px;">
-        <button class="btn" onclick="connect()">CONNECT</button>
+    <div style="font-weight: 900; letter-spacing: 1px;">TITAN <span style="color:var(--p)">P2P</span></div>
+    <div class="room-controls">
+        <span id="roomBadge" class="status-badge">OFFLINE</span>
+        <input type="text" id="roomInput" placeholder="Room ID...">
+        <button class="btn" onclick="initSession()">JOIN</button>
     </div>
 </header>
 
 <main>
     <div class="panel">
-        <h3 style="margin:0">MY SHARED FILES</h3>
-        <button class="btn btn-green" onclick="document.getElementById('picker').click()" style="margin-top:10px">+ ADD FILES</button>
+        <div class="panel-h">
+            <h4 style="margin:0">MY LIBRARY</h4>
+            <button class="btn btn-add" onclick="document.getElementById('picker').click()">+ ADD FILES</button>
+        </div>
         <input type="file" id="picker" multiple style="display:none">
-        <div id="myFiles" class="file-list"></div>
+        <div id="myFilesUI" class="file-list"></div>
     </div>
+
     <div class="panel">
-        <h3 style="margin:0">REMOTE FILES</h3>
-        <div id="peerFiles" class="file-list"></div>
+        <div class="panel-h">
+            <h4 style="margin:0">REMOTE LIBRARY</h4>
+            <span id="peerState" style="font-size: 10px; color: #666;">No peer connected</span>
+        </div>
+        <div id="peerFilesUI" class="file-list"></div>
     </div>
 </main>
 
 <div id="monitor">
-    <div style="color: var(--p); font-size: 0.7rem; font-weight: bold; margin-bottom: 10px;">ACTIVE TRANSFERS</div>
+    <div style="display:flex; justify-content: space-between; align-items:center; margin-bottom:10px">
+        <span style="color: var(--p); font-size: 0.7rem; font-weight: bold; letter-spacing: 1px;">ACTIVE TRANSFERS</span>
+        <button onclick="document.getElementById('transferList').innerHTML=''" style="background:none; border:none; color:#555; cursor:pointer; font-size:10px;">CLEAR FINISHED</button>
+    </div>
     <div id="transferList"></div>
 </div>
 
 <script>
     let peer, conn, myFiles = {};
-    const CHUNK_SIZE = 16384; // 16KB Strict Binary Chunks
+    const CHUNK_SIZE = 16384; // 16KB Strict Binary for Stability
 
-    function connect() {
+    function initSession() {
         const room = document.getElementById('roomInput').value.trim();
         if (!room) return;
         
         if (peer) peer.destroy();
+        
+        // P2P Discovery: Try A, fallback to B
         peer = new Peer(`TITAN-PRO-${room}-A`, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
-
+        
         peer.on('error', (err) => {
             if (err.type === 'unavailable-id') {
                 peer = new Peer(`TITAN-PRO-${room}-B`, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
-                setup(`TITAN-PRO-${room}-A`);
+                setupDiscovery(`TITAN-PRO-${room}-A`);
             }
         });
-        peer.on('open', () => {
-            document.getElementById('roomStatus').innerText = "ONLINE: " + room.toUpperCase();
-            setup(`TITAN-PRO-${room}-B`);
+
+        peer.on('open', (id) => {
+            document.getElementById('roomBadge').innerText = "ONLINE";
+            document.getElementById('roomBadge').classList.add('status-online');
+            setupDiscovery(`TITAN-PRO-${room}-B`);
         });
     }
 
-    function setup(target) {
-        peer.on('connection', c => handleConn(c));
-        setInterval(() => { if(!conn || !conn.open) handleConn(peer.connect(target)); }, 3000);
+    function setupDiscovery(targetId) {
+        peer.on('connection', c => handleConnection(c));
+        // Auto-reconnect loop
+        const loop = setInterval(() => {
+            if (conn && conn.open) return;
+            handleConnection(peer.connect(targetId));
+        }, 3000);
     }
 
-    function handleConn(c) {
+    function handleConnection(c) {
+        if (!c) return;
         conn = c;
-        conn.on('open', () => { if(Object.keys(myFiles).length > 0) broadcast(); });
+        conn.on('open', () => {
+            document.getElementById('peerState').innerText = "PEER ACTIVE";
+            document.getElementById('peerState').style.color = "var(--success)";
+            syncLibrary();
+        });
+
         conn.on('data', data => {
-            if (data.type === 'list') renderPeerFiles(data.files);
-            if (data.type === 'req') sendStrictFile(data.name);
-            if (data.type === 'meta') receiveStrictFile(data);
-            if (data.type === 'ack') {
+            if (data.type === 'manifest') renderPeerLibrary(data.files);
+            if (data.type === 'request') startBinaryUpload(data.name);
+            if (data.type === 'meta') startBinaryDownload(data);
+            if (data.type === 'done') {
                 const tag = document.getElementById(`tag-${data.tid}`);
-                if(tag) { tag.innerText = "COMPLETE"; tag.style.background = "#4c6b22"; }
+                if(tag) { tag.innerText = "RECEIVED"; tag.style.color = "var(--success)"; }
             }
         });
     }
 
+    // --- LIBRARY MGMT ---
     document.getElementById('picker').onchange = (e) => {
         for (let f of e.target.files) {
             myFiles[f.name] = f;
-            document.getElementById('myFiles').innerHTML += `<div style="padding:10px; border-bottom:1px solid #333; font-size:0.9rem">${f.name}</div>`;
+            document.getElementById('myFilesUI').innerHTML += `
+                <div class="file-item">
+                    <span>${f.name}</span>
+                    <span style="color:#666; font-size:10px">${(f.size/1024/1024).toFixed(2)} MB</span>
+                </div>`;
         }
-        broadcast();
+        syncLibrary();
     };
 
-    function broadcast() {
+    function syncLibrary() {
         if (conn?.open) {
-            conn.send({ type: 'list', files: Object.values(myFiles).map(f => ({ name: f.name, size: f.size })) });
+            const list = Object.values(myFiles).map(f => ({ name: f.name, size: f.size }));
+            conn.send({ type: 'manifest', files: list });
         }
     }
 
-    function renderPeerFiles(files) {
-        const ui = document.getElementById('peerFiles');
+    function renderPeerLibrary(files) {
+        const ui = document.getElementById('peerFilesUI');
         ui.innerHTML = "";
         files.forEach(f => {
-            ui.innerHTML += `<div style="display:flex; justify-content:space-between; padding:10px; border-bottom:1px solid #333">
-                <span style="font-size:0.9rem">${f.name}</span>
-                <button class="btn" style="padding:4px 8px; font-size:0.7rem" onclick="conn.send({type:'req', name:'${f.name}'})">DOWNLOAD</button>
-            </div>`;
+            const div = document.createElement('div');
+            div.className = 'file-item';
+            div.innerHTML = `
+                <span>${f.name}</span>
+                <button class="btn" onclick="conn.send({type:'request', name:'${f.name}'})">GET</button>`;
+            ui.appendChild(div);
         });
     }
 
-    // --- STRICT BINARY SENDING ---
-    async function sendStrictFile(name) {
+    // --- CORE BINARY ENGINE ---
+    async function startBinaryUpload(name) {
         const file = myFiles[name];
         const tid = Math.random().toString(36).substr(2, 5);
-        addTransferRow(tid, file.name, 'uploading');
+        createTransferRow(tid, file.name, 'uploading');
         
         conn.send({ type: 'meta', name: file.name, size: file.size, tid: tid });
 
@@ -143,57 +188,55 @@
             const chunk = buffer.slice(offset, offset + CHUNK_SIZE);
             conn.send(chunk);
             offset += CHUNK_SIZE;
-            updateUI(tid, offset, file.size);
+            updateProgressUI(tid, offset, file.size);
         }
     }
 
-    // --- STRICT BINARY RECEIVING ---
-    function receiveStrictFile(meta) {
-        addTransferRow(meta.tid, meta.name, 'downloading');
+    function startBinaryDownload(meta) {
+        createTransferRow(meta.tid, meta.name, 'downloading');
         let received = 0;
-        let parts = [];
+        let fileParts = [];
 
         const onData = (data) => {
-            if (data.type) return; 
-            parts.push(data);
+            if (data.type) return; // Skip signaling messages
+            fileParts.push(data);
             received += data.byteLength;
-            updateUI(meta.tid, received, meta.size);
+            updateProgressUI(meta.tid, received, meta.size);
 
             if (received >= meta.size) {
                 conn.off('data', onData);
-                const blob = new Blob(parts, { type: 'application/octet-stream' });
+                const blob = new Blob(fileParts, { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = meta.name;
-                a.click();
+                a.href = url; a.download = meta.name; a.click();
                 
-                const tag = document.getElementById(`tag-${meta.tid}`);
-                tag.innerText = "SAVED";
-                tag.style.background = "#4c6b22";
-                conn.send({ type: 'ack', tid: meta.tid });
+                document.getElementById(`tag-${meta.tid}`).innerText = "COMPLETE";
+                document.getElementById(`tag-${meta.tid}`).style.color = "var(--success)";
+                conn.send({ type: 'done', tid: meta.tid });
+                fileParts = [];
             }
         };
         conn.on('data', onData);
     }
 
-    function addTransferRow(id, name, type) {
+    // --- UI HELPERS ---
+    function createTransferRow(id, name, type) {
         const list = document.getElementById('transferList');
-        const color = type === 'uploading' ? 'var(--p)' : 'var(--success)';
+        const isDl = type === 'downloading';
         const row = document.createElement('div');
-        row.className = 'transfer-row';
-        row.id = `row-${id}`;
+        row.className = `transfer-row ${isDl ? 'downloading-row' : ''}`;
         row.innerHTML = `
             <div>
-                <div id="tag-${id}" class="type-tag" style="background:${color}">${type}</div>
+                <div id="tag-${id}" class="type-label" style="color:${isDl?'var(--success)':'var(--p)'}">${type}</div>
                 <div style="font-size:10px; margin-top:4px; overflow:hidden; white-space:nowrap;">${name}</div>
             </div>
-            <progress id="bar-${id}" value="0" max="100"></progress>
-            <div id="perc-${id}" style="font-size:11px; text-align:right;">0%</div>
+            <progress id="bar-${id}" class="${isDl?'dl-bar':''}" value="0" max="100"></progress>
+            <div id="perc-${id}" style="font-size:11px; text-align:right; font-weight:bold;">0%</div>
         `;
         list.prepend(row);
     }
 
-    function updateUI(id, curr, total) {
+    function updateProgressUI(id, curr, total) {
         const p = Math.floor((Math.min(curr, total) / total) * 100);
         const bar = document.getElementById(`bar-${id}`);
         const perc = document.getElementById(`perc-${id}`);
