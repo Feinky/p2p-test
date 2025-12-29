@@ -1,115 +1,167 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>IPFS P2P Room Storage</title>
-    <script type="module">
-        // Importing Helia (Modern IPFS for Browser)
-        import { createHelia } from 'https://esm.sh/helia';
-        import { unixfs } from 'https://esm.sh/@helia/unixfs';
-        import { strings } from 'https://esm.sh/@helia/strings';
-
-        let helia, fs, s;
-        const fileList = document.getElementById('fileList');
-        const status = document.getElementById('status');
-
-        async function initIPFS() {
-            status.innerText = "🌀 Booting IPFS Node...";
-            helia = await createHelia();
-            fs = unixfs(helia);
-            s = strings(helia);
-            
-            status.innerText = "🌐 Node Online. Waiting for files...";
-            setupRoom();
-        }
-
-        // 1. Room Logic (PubSub)
-        // Note: For a true room without a server, we use a specific 'topic'
-        const topic = window.location.hash || "#global-lobby";
-
-        async function setupRoom() {
-            // We subscribe to the room topic
-            await helia.libp2p.services.pubsub.subscribe(topic);
-            
-            helia.libp2p.services.pubsub.addEventListener('message', (evt) => {
-                const data = JSON.parse(new TextDecoder().decode(evt.detail.data));
-                addFileToList(data.name, data.cid, data.size);
-            });
-        }
-
-        // 2. Upload to IPFS
-        window.uploadFile = async () => {
-            const file = document.getElementById('fileInput').files[0];
-            if (!file) return;
-
-            status.innerText = "📤 Uploading to IPFS Network...";
-            const bytes = new Uint8Array(await file.arrayBuffer());
-            const cid = await fs.addBytes(bytes);
-
-            const fileData = {
-                name: file.name,
-                cid: cid.toString(),
-                size: (file.size / 1024 / 1024).toFixed(2) + " MB"
-            };
-
-            // Broadcast the file info to everyone in the room
-            const msg = new TextEncoder().encode(JSON.stringify(fileData));
-            await helia.libp2p.services.pubsub.publish(topic, msg);
-
-            addFileToList(fileData.name, fileData.cid, fileData.size);
-            status.innerText = "✅ File Broadcasted!";
-        };
-
-        // 3. Download from IPFS
-        window.downloadFile = async (cid, name) => {
-            status.innerText = "📥 Fetching from IPFS peers...";
-            const chunks = [];
-            for await (const chunk of fs.cat(cid)) {
-                chunks.push(chunk);
-            }
-            const blob = new Blob(chunks);
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = name;
-            a.click();
-            status.innerText = "🎉 Download Complete!";
-        };
-
-        function addFileToList(name, cid, size) {
-            // Check if already in list
-            if (document.getElementById(cid)) return;
-
-            const li = document.createElement('li');
-            li.id = cid;
-            li.innerHTML = `
-                <strong>${name}</strong> (${size}) <br>
-                <small>${cid}</small> <br>
-                <button onclick="downloadFile('${cid}', '${name}')">Download</button>
-                <hr>
-            `;
-            fileList.appendChild(li);
-        }
-
-        initIPFS();
-    </script>
+    <meta charset="UTF-8">
+    <title>Unlimited P2P Transfer</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: sans-serif; max-width: 500px; margin: auto; padding: 20px; background: #f4f4f4; }
-        .box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        #fileList { list-style: none; padding: 0; margin-top: 20px; }
-        button { background: #007bff; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
-        #status { font-size: 0.8rem; color: #666; margin-bottom: 10px; }
+        :root { --bg: #09090b; --accent: #3b82f6; --text: #fafafa; }
+        body { font-family: -apple-system, system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .card { background: #18181b; padding: 2rem; border-radius: 1rem; width: 100%; max-width: 400px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); border: 1px solid #27272a; }
+        input, button { width: 100%; padding: 0.75rem; margin: 0.5rem 0; border-radius: 0.5rem; border: none; font-size: 1rem; box-sizing: border-box; }
+        input { background: #27272a; color: white; border: 1px solid #3f3f46; }
+        button { background: var(--accent); color: white; font-weight: bold; cursor: pointer; transition: opacity 0.2s; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .status-pill { font-size: 0.75rem; color: #a1a1aa; background: #27272a; padding: 0.25rem 0.75rem; border-radius: 1rem; display: inline-block; margin-bottom: 1rem; }
+        progress { width: 100%; height: 12px; accent-color: var(--accent); }
     </style>
 </head>
 <body>
-    <div class="box">
-        <h2>📦 IPFS Room</h2>
-        <div id="status">Loading libraries...</div>
-        
-        <input type="file" id="fileInput">
-        <button onclick="uploadFile()">Upload & Share</button>
 
-        <h3>Available Files</h3>
-        <ul id="fileList"></ul>
+<div class="card">
+    <div id="status" class="status-pill">Ready</div>
+    <h2 style="margin-top:0">Unlimited Transfer</h2>
+    
+    <input type="text" id="roomInput" placeholder="Enter Room Name (e.g. dragon-blue)">
+    
+    <div id="controls" style="display:none">
+        <input type="file" id="fileInput" style="display:none">
+        <button onclick="document.getElementById('fileInput').click()">📤 Host Massive File</button>
+        <div style="text-align:center; margin: 10px 0; color: #52525b;">— OR —</div>
+        <button onclick="joinAsReceiver()" style="background:#10b981">📥 Join & Receive</button>
     </div>
+
+    <div id="transferBox" style="display:none; margin-top: 1.5rem; border-top: 1px solid #27272a; padding-top: 1.5rem;">
+        <div id="fileInfo" style="font-weight: bold; margin-bottom: 0.5rem;">Filename.zip</div>
+        <progress id="progBar" value="0" max="100"></progress>
+        <div id="progText" style="text-align:right; font-size: 0.8rem; margin-top: 5px;">0%</div>
+    </div>
+</div>
+
+<script>
+    let peer, conn, wakeLock = null;
+
+    // 1. AUTO-WAKE LOCK (Keep computer from sleeping)
+    async function requestWakeLock() {
+        try {
+            if ('wakeLock' in navigator) {
+                wakeLock = await navigator.wakeLock.request('screen');
+                console.log("Wake Lock Active");
+            }
+        } catch (err) { console.error(`${err.name}, ${err.message}`); }
+    }
+
+    // 2. INITIALIZE ROOM
+    const roomInput = document.getElementById('roomInput');
+    if(window.location.hash) {
+        roomInput.value = window.location.hash.substring(1);
+        startRoom();
+    }
+    roomInput.oninput = () => { if(roomInput.value.length > 3) startRoom(); };
+
+    function startRoom() {
+        const room = roomInput.value.trim();
+        const hostID = "UNLIM-" + room + "-HOST";
+        if(peer) peer.destroy();
+        
+        peer = new Peer(hostID);
+        peer.on('open', () => {
+            updateStatus("Active: " + room);
+            document.getElementById('controls').style.display = 'block';
+            window.location.hash = room;
+        });
+
+        // HOST SIDE: Listen for someone joining
+        peer.on('connection', (c) => {
+            conn = c;
+            setupSender();
+        });
+    }
+
+    // 3. SENDER LOGIC (Stream from disk to network)
+    function setupSender() {
+        const fileInput = document.getElementById('fileInput');
+        fileInput.onchange = async () => {
+            const file = fileInput.files[0];
+            if(!file) return;
+
+            requestWakeLock();
+            updateStatus("Peer Connected! Sending...");
+            showTransferUI(file.name);
+
+            conn.send({ type: 'meta', name: file.name, size: file.size });
+
+            const stream = file.stream();
+            const reader = stream.getReader();
+            let sent = 0;
+
+            while (true) {
+                // Backpressure: Don't overwhelm the network buffer
+                if (conn.dataChannel.bufferedAmount > 1024 * 1024) { // 1MB buffer
+                    await new Promise(r => setTimeout(r, 100));
+                    continue;
+                }
+                const { done, value } = await reader.read();
+                if (done) break;
+                conn.send(value);
+                sent += value.length;
+                updateProgress(sent, file.size);
+            }
+            updateStatus("✅ Transfer Complete!");
+            if(wakeLock) wakeLock.release();
+        };
+    }
+
+    // 4. RECEIVER LOGIC (Stream from network to disk)
+    async function joinAsReceiver() {
+        const room = roomInput.value.trim();
+        const hostID = "UNLIM-" + room + "-HOST";
+        
+        updateStatus("Connecting to host...");
+        const receiverPeer = new Peer();
+        
+        receiverPeer.on('open', () => {
+            const remoteConn = receiverPeer.connect(hostID);
+            remoteConn.on('data', async (data) => {
+                if (data.type === 'meta') {
+                    if (!window.showSaveFilePicker) return alert("Please use Chrome or Edge for massive files.");
+                    
+                    const handle = await window.showSaveFilePicker({ suggestedName: data.name });
+                    const writable = await handle.createWritable();
+                    let received = 0;
+                    
+                    requestWakeLock();
+                    showTransferUI(data.name);
+                    updateStatus("Receiving...");
+
+                    remoteConn.on('data', async (chunk) => {
+                        if (chunk.type === 'meta') return;
+                        await writable.write(chunk);
+                        received += chunk.byteLength;
+                        updateProgress(received, data.size);
+                        
+                        if (received >= data.size) {
+                            await writable.close();
+                            updateStatus("✅ File Saved Successfully!");
+                            if(wakeLock) wakeLock.release();
+                        }
+                    });
+                }
+            });
+        });
+    }
+
+    // 5. UI HELPERS
+    function updateStatus(txt) { document.getElementById('status').innerText = txt; }
+    function showTransferUI(name) {
+        document.getElementById('transferBox').style.display = 'block';
+        document.getElementById('fileInfo').innerText = name;
+    }
+    function updateProgress(curr, total) {
+        const p = Math.floor((curr / total) * 100);
+        document.getElementById('progBar').value = p;
+        document.getElementById('progText').innerText = p + "% (" + (curr/1024/1024/1024).toFixed(2) + "GB / " + (total/1024/1024/1024).toFixed(2) + "GB)";
+    }
+</script>
 </body>
 </html>
