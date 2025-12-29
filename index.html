@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Titan P2P | Final Stable</title>
+    <title>Titan P2P | Multi-Peer Mesh</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         :root { --p: #1a9fff; --bg: #0b0e14; --card: #1c1c1e; --text: #ffffff; --success: #4c6b22; }
@@ -18,16 +18,17 @@
         #monitor { background: #171a21; border-top: 1px solid #333; height: 150px; padding: 15px 25px; overflow-y: auto; }
         .transfer-row { display: grid; grid-template-columns: 100px 1fr 80px; align-items: center; gap: 15px; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 4px; margin-bottom: 5px; border-left: 3px solid var(--p); }
         progress { width: 100%; height: 8px; accent-color: var(--p); }
+        .peer-info { font-size: 11px; color: var(--p); margin-bottom: 5px; font-weight: bold; border-bottom: 1px solid #333; padding-bottom: 5px; }
     </style>
 </head>
 <body>
 
 <header>
-    <div style="font-weight: 900;">TITAN P2P</div>
+    <div style="font-weight: 900;">TITAN P2P <span style="font-size: 10px; color: var(--p);">MESH</span></div>
     <div style="display:flex; gap:10px; align-items:center;">
         <div id="status" class="net-pill">OFFLINE</div>
         <input type="text" id="roomIn" placeholder="Room Name..." style="background:#222; border:none; color:white; padding:8px; border-radius:4px;">
-        <button class="btn" onclick="start()">CONNECT</button>
+        <button class="btn" onclick="joinMesh()">JOIN ROOM</button>
     </div>
 </header>
 
@@ -51,58 +52,90 @@
 </div>
 
 <script>
-    let peer, conn, myFiles = {}, peerFiles = {};
+    let peer, connections = {}, myFiles = {}, remoteFiles = {};
     const CHUNK_SIZE = 16384;
 
-    function start() {
+    async function joinMesh() {
         const room = document.getElementById('roomIn').value.trim();
         if (!room) return;
-        if (peer) peer.destroy();
-
-        // SYMMETRIC STRATEGY
-        // Try to be the "Host" (-A). If taken, be the "Guest" (-B).
-        peer = new Peer(`TITAN-STABLE-${room}-A`, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
         
-        peer.on('open', () => {
-            updateStatus("WAITING FOR PEER...");
-            setupConnection(`TITAN-STABLE-${room}-B`); // Try to find B
+        if (peer) peer.destroy();
+        connections = {};
+        remoteFiles = {};
+
+        // 1. Generate a unique ID for this session
+        const myId = 'TITAN-' + room + '-' + Math.floor(Math.random() * 1000000);
+        peer = new Peer(myId, { 
+            config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }]},
+            debug: 1
         });
 
-        peer.on('error', (err) => {
-            if (err.type === 'unavailable-id') {
-                // Host exists, so we become the Guest
-                peer = new Peer(`TITAN-STABLE-${room}-B`, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
-                peer.on('open', () => {
-                    updateStatus("JOINING HOST...");
-                    setupConnection(`TITAN-STABLE-${room}-A`); // Connect to A
-                });
+        peer.on('open', (id) => {
+            updateStatus("ONLINE", true);
+            // 2. We use PeerJS "listAllPeers" to find others in the same room
+            // Note: This requires a public key or discovery. For simplicity in a single file, 
+            // we'll use a "shoutout" system where people connect to the base room name.
+            discoverPeers(room);
+        });
+
+        peer.on('connection', c => handleConn(c));
+    }
+
+    // discovery logic for serverless
+    function discoverPeers(room) {
+        // We try to connect to a few "well-known" slots to bridge the mesh
+        // This allows up to 10+ people to find each other instantly
+        for(let i=1; i<=5; i++) {
+            const targetId = `TITAN-LOBBY-${room}-${i}`;
+            if (peer.id === targetId) continue;
+            const c = peer.connect(targetId);
+            if (c) handleConn(c);
+        }
+
+        // Also try to claim a lobby slot if available
+        tryToBeLobby(room, 1);
+    }
+
+    function tryToBeLobby(room, slot) {
+        if (slot > 5) return;
+        const lobbyId = `TITAN-LOBBY-${room}-${slot}`;
+        const lobbyPeer = new Peer(lobbyId, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
+        
+        lobbyPeer.on('open', () => {
+            console.log("Became Lobby Slot", slot);
+            lobbyPeer.on('connection', c => handleConn(c));
+        });
+
+        lobbyPeer.on('error', () => {
+            lobbyPeer.destroy();
+            tryToBeLobby(room, slot + 1);
+        });
+    }
+
+    function handleConn(c) {
+        if (connections[c.peer]) return;
+        
+        c.on('open', () => {
+            connections[c.peer] = c;
+            updateStatus(`MESH ACTIVE: ${Object.keys(connections).length} PEERS`, true);
+            sync(c);
+        });
+
+        c.on('data', data => {
+            if (data.type === 'list') {
+                remoteFiles[c.peer] = data.files;
+                renderRemote();
             }
+            if (data.type === 'req') upload(data.name, c);
+            if (data.type === 'meta') download(data, c);
         });
 
-        peer.on('connection', c => handle(c));
-    }
-
-    function setupConnection(target) {
-        // Repeatedly try to find the other person until they exist
-        const dialer = setInterval(() => {
-            if (conn && conn.open) return clearInterval(dialer);
-            handle(peer.connect(target));
-        }, 2000);
-    }
-
-    function handle(c) {
-        if (!c) return;
-        conn = c;
-        conn.on('open', () => {
-            updateStatus("CONNECTED", true);
-            sync();
+        c.on('close', () => {
+            delete connections[c.peer];
+            delete remoteFiles[c.peer];
+            updateStatus(`MESH ACTIVE: ${Object.keys(connections).length} PEERS`, true);
+            renderRemote();
         });
-        conn.on('data', data => {
-            if (data.type === 'list') renderRemote(data.files);
-            if (data.type === 'req') upload(data.name);
-            if (data.type === 'meta') download(data);
-        });
-        conn.on('close', () => updateStatus("DISCONNECTED"));
     }
 
     function updateStatus(txt, active = false) {
@@ -111,46 +144,61 @@
         active ? el.classList.add('active') : el.classList.remove('active');
     }
 
-    // --- LOGIC ---
     document.getElementById('fileIn').onchange = (e) => {
         for (let f of e.target.files) {
             myFiles[f.name] = f;
-            document.getElementById('myList').innerHTML += `<div style="padding:5px; font-size:13px; border-bottom:1px solid #333">${f.name}</div>`;
+            document.getElementById('myList').innerHTML += `<div style="padding:5px; font-size:12px; border-bottom:1px solid #333">${f.name}</div>`;
         }
-        sync();
+        Object.values(connections).forEach(c => sync(c));
     };
 
-    function sync() {
-        if (conn?.open) conn.send({ type: 'list', files: Object.values(myFiles).map(f => ({ name: f.name, size: f.size })) });
+    function sync(targetConn) {
+        if (targetConn?.open) {
+            targetConn.send({ 
+                type: 'list', 
+                files: Object.values(myFiles).map(f => ({ name: f.name, size: f.size })) 
+            });
+        }
     }
 
-    function renderRemote(files) {
-        const ui = document.getElementById('peerList'); ui.innerHTML = "";
-        files.forEach(f => {
-            ui.innerHTML += `<div style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid #333">
-                <span style="font-size:13px">${f.name}</span>
-                <button class="btn" style="padding:2px 8px; font-size:11px" onclick="conn.send({type:'req', name:'${f.name}'})">GET</button>
-            </div>`;
-        });
+    function renderRemote() {
+        const ui = document.getElementById('peerList'); 
+        ui.innerHTML = "";
+        
+        for (const [peerId, files] of Object.entries(remoteFiles)) {
+            const shortId = peerId.split('-').pop();
+            ui.innerHTML += `<div class="peer-info">PEER ${shortId}</div>`;
+            files.forEach(f => {
+                ui.innerHTML += `<div style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid #333; margin-bottom:10px">
+                    <span style="font-size:12px">${f.name}</span>
+                    <button class="btn" style="padding:2px 8px; font-size:11px" onclick="requestFromPeer('${peerId}', '${f.name}')">GET</button>
+                </div>`;
+            });
+        }
     }
 
-    async function upload(name) {
+    function requestFromPeer(peerId, fileName) {
+        const c = connections[peerId];
+        if (c) c.send({ type: 'req', name: fileName });
+    }
+
+    async function upload(name, targetConn) {
         const f = myFiles[name];
         const tid = Math.random().toString(36).substr(2, 5);
         createRow(tid, name, 'UPLOAD');
-        conn.send({ type: 'meta', name: f.name, size: f.size, tid: tid });
+        targetConn.send({ type: 'meta', name: f.name, size: f.size, tid: tid });
         
         const buffer = await f.arrayBuffer();
         let offset = 0;
         while (offset < f.size) {
-            if (conn.dataChannel.bufferedAmount > 1000000) { await new Promise(r => setTimeout(r, 40)); continue; }
-            conn.send(buffer.slice(offset, offset + CHUNK_SIZE));
+            if (targetConn.dataChannel.bufferedAmount > 1000000) { await new Promise(r => setTimeout(r, 40)); continue; }
+            targetConn.send(buffer.slice(offset, offset + CHUNK_SIZE));
             offset += CHUNK_SIZE;
             updateUI(tid, offset, f.size);
         }
     }
 
-    function download(meta) {
+    function download(meta, targetConn) {
         createRow(meta.tid, meta.name, 'DOWNLOAD');
         let received = 0, chunks = [];
         const handler = (data) => {
@@ -159,13 +207,13 @@
             received += data.byteLength;
             updateUI(meta.tid, received, meta.size);
             if (received >= meta.size) {
-                conn.off('data', handler);
+                targetConn.off('data', handler);
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(new Blob(chunks));
                 a.download = meta.name; a.click();
             }
         };
-        conn.on('data', handler);
+        targetConn.on('data', handler);
     }
 
     function createRow(id, name, type) {
