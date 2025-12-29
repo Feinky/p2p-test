@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>P2P Turbo Transfer</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 50px; background: #f4f4f9; }
+        #drop-zone { border: 2px dashed #007bff; padding: 40px; border-radius: 20px; background: white; transition: 0.3s; }
+        #status { margin-top: 20px; font-weight: bold; color: #555; }
+        .progress-container { width: 100%; background: #ddd; height: 20px; border-radius: 10px; margin-top: 10px; display: none; }
+        #progress-bar { width: 0%; height: 100%; background: #28a745; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <h1>🚀 P2P Turbo Transfer</h1>
+    <div id="drop-zone">Drag & Drop a file here or click to select</div>
+    <input type="file" id="fileInput" style="display:none">
+    
+    <div id="status">Connecting to network...</div>
+    <div class="progress-container" id="progCont">
+        <div id="progress-bar"></div>
+    </div>
+    <p id="share-url"></p>
+
+    <script>
+        const status = document.getElementById('status');
+        const progBar = document.getElementById('progress-bar');
+        const progCont = document.getElementById('progCont');
+        const shareUrl = document.getElementById('share-url');
+
+        // 1. Automatic Room Setup
+        const roomId = window.location.hash.substring(1) || Math.random().toString(36).substr(2, 9);
+        if (!window.location.hash) window.location.hash = roomId;
+
+        const peer = new Peer(roomId);
+
+        peer.on('open', (id) => {
+            status.innerText = "Ready! Share this link to connect:";
+            shareUrl.innerHTML = `<a href="${window.location.href}" target="_blank">${window.location.href}</a>`;
+            
+            // Auto-connect if someone else is already in the room
+            // Note: In a real app, you'd use a small 'lobby' check, 
+            // but here we wait for the second person to initiate 'peer.connect'
+        });
+
+        // 2. Receiving Logic
+        peer.on('connection', (conn) => {
+            status.innerText = "Connected! Receiving file...";
+            let receivedChunks = [];
+            let metadata = null;
+
+            conn.on('data', (data) => {
+                if (data.type === 'metadata') {
+                    metadata = data;
+                    progCont.style.display = 'block';
+                } else {
+                    receivedChunks.push(data);
+                    let progress = (receivedChunks.length * 16384 / metadata.size) * 100;
+                    progBar.style.width = Math.min(progress, 100) + "%";
+
+                    if (receivedChunks.length * 16384 >= metadata.size) {
+                        const blob = new Blob(receivedChunks);
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = metadata.name;
+                        a.click();
+                        status.innerText = "🎉 File Downloaded!";
+                    }
+                }
+            });
+        });
+
+        // 3. Sending Logic (with Buffer Monitoring)
+        const sendFile = (file) => {
+            const conn = peer.connect(roomId); // Connect to the peer in the room
+            conn.on('open', async () => {
+                status.innerText = "Sending " + file.name;
+                progCont.style.display = 'block';
+                
+                // Send metadata first
+                conn.send({ type: 'metadata', name: file.name, size: file.size });
+
+                const chunkSize = 16384; // 16KB chunks
+                let offset = 0;
+
+                while (offset < file.size) {
+                    // BUFFER MONITOR: Prevents crashing on 50MB+ files
+                    if (conn.dataChannel.bufferedAmount > 1000000) { // 1MB buffer limit
+                        await new Promise(res => setTimeout(res, 50)); 
+                        continue;
+                    }
+
+                    const chunk = file.slice(offset, offset + chunkSize);
+                    const buffer = await chunk.arrayBuffer();
+                    conn.send(buffer);
+                    offset += chunkSize;
+                    progBar.style.width = (offset / file.size * 100) + "%";
+                }
+                status.innerText = "✅ Sent Successfully!";
+            });
+        };
+
+        // UI Listeners
+        document.getElementById('drop-zone').onclick = () => document.getElementById('fileInput').click();
+        document.getElementById('fileInput').onchange = (e) => sendFile(e.target.files[0]);
+    </script>
+</body>
+</html>
