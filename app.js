@@ -150,14 +150,18 @@ async function finalize(tid, name, chunks, expectedHash, c) {
     const actualHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 
     if (actualHash !== expectedHash) {
-        tag.innerText = "CORRUPT: RETRYING...";
+        tag.innerText = "CORRUPT: RE-REQUESTING...";
         tag.style.color = "#ffbb00";
-        
-        // --- THE AUTO-RETRY ---
-        // We use the 'c' we passed in to yell back to the sender
+
+        // Mobile devices might need a slightly longer timeout 
+        // to stabilize the connection after a failed burst
         setTimeout(() => {
-            c.send({ type: 'req', name: name });
-        }, 1000); // 1 second delay so the user sees the "Corrupt" status first
+            if (c && c.open) {
+                c.send({ type: 'req', name: name });
+            } else {
+                tag.innerText = "CONNECTION LOST";
+            }
+        }, 1500); 
         return;
     }
 
@@ -189,4 +193,5 @@ function updateUI(id, curr, total) {
     if(bar) bar.value = p;
     if(perc) perc.innerText = p + "%";
 }
+
 
