@@ -3,205 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Titan P2P | Sequential Master</title>
+    <title>Titan P2P | Pro</title>
+    <link rel="stylesheet" href="style.css">
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-    <style>
-        :root { --p: #1a9fff; --bg: #0b0e14; --card: #1c1c1e; --text: #ffffff; --success: #4c6b22; }
-        body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        header { background: #000; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--p); }
-        .net-pill { font-size: 10px; padding: 5px 12px; border-radius: 20px; background: #222; color: #666; font-weight: bold; border: 1px solid #444; }
-        .net-pill.active { border-color: var(--success); color: #8bc34a; background: rgba(76, 200, 34, 0.1); }
-        main { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; flex-grow: 1; background: #333; }
-        .panel { background: var(--card); padding: 20px; display: flex; flex-direction: column; }
-        .list { flex-grow: 1; overflow-y: auto; background: rgba(0,0,0,0.3); border-radius: 8px; padding: 10px; margin-top: 10px; }
-        .btn { background: var(--p); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        #monitor { background: #171a21; border-top: 1px solid #333; height: 160px; padding: 15px 25px; overflow-y: auto; }
-        .transfer-row { display: grid; grid-template-columns: 100px 1fr 80px; align-items: center; gap: 15px; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 4px; margin-bottom: 5px; border-left: 3px solid var(--p); }
-        progress { width: 100%; height: 8px; accent-color: var(--p); border-radius: 10px; }
-    </style>
 </head>
 <body>
 
 <header>
-    <div style="font-weight: 900;">TITAN P2P</div>
-    <div style="display:flex; gap:10px; align-items:center;">
-        <div id="status" class="net-pill">OFFLINE</div>
-        <input type="text" id="roomIn" placeholder="Room Name..." style="background:#222; border:none; color:white; padding:8px; border-radius:4px;">
-        <button class="btn" onclick="joinMesh()">JOIN ROOM</button>
+    <div class="logo">TITAN <span>P2P</span></div>
+    <div class="nav-controls">
+        <div id="status" class="pill">OFFLINE</div>
+        <input type="text" id="roomInput" placeholder="Room Name">
+        <button class="btn" onclick="joinMesh()">JOIN</button>
     </div>
 </header>
 
 <main>
-    <div class="panel">
-        <div style="display:flex; justify-content:space-between;">
-            <h4 style="margin:0">MY FILES</h4>
-            <button class="btn" style="background:var(--success)" onclick="document.getElementById('fileIn').click()">+ ADD</button>
+    <section class="panel">
+        <div class="panel-header">
+            <h3>MY LIBRARY</h3>
+            <button class="btn btn-alt" onclick="document.getElementById('fileInput').click()">+ ADD</button>
         </div>
-        <input type="file" id="fileIn" multiple style="display:none">
-        <div id="myList" class="list"></div>
-    </div>
-    <div class="panel">
-        <h4 style="margin:0">NETWORK LIBRARY</h4>
-        <div id="peerList" class="list"></div>
-    </div>
+        <input type="file" id="fileInput" multiple style="display:none">
+        <div id="myList" class="file-area"></div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-header"><h3>NETWORK</h3></div>
+        <div id="peerList" class="file-area"></div>
+    </section>
 </main>
 
-<div id="monitor">
+<footer id="monitor">
     <div id="transfers"></div>
-</div>
+</footer>
 
-<script>
-    let peer, connections = {}, myFiles = {}, remoteFiles = {};
-    const CHUNK_SIZE = 16384; 
-
-    async function joinMesh() {
-        const room = document.getElementById('roomIn').value.trim();
-        if (!room) return;
-        if (peer) peer.destroy();
-        const myId = `TITAN-${room}-${Math.floor(Math.random() * 10000)}`;
-        peer = new Peer(myId, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
-        peer.on('open', () => { updateStatus("ONLINE", true); discover(room); });
-        peer.on('connection', c => handleConn(c));
-    }
-
-    function discover(room) {
-        for(let i=1; i<=5; i++) {
-            const t = `TITAN-LOBBY-${room}-${i}`;
-            if (peer.id !== t) handleConn(peer.connect(t));
-        }
-        tryLobby(room, 1);
-    }
-
-    function tryLobby(room, s) {
-        if (s > 5) return;
-        const lId = `TITAN-LOBBY-${room}-${s}`;
-        const lPeer = new Peer(lId, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
-        lPeer.on('open', () => { lPeer.on('connection', c => handleConn(c)); });
-        lPeer.on('error', () => { lPeer.destroy(); tryLobby(room, s+1); });
-    }
-
-    function handleConn(c) {
-        if (!c || connections[c.peer]) return;
-        c.on('open', () => {
-            connections[c.peer] = c;
-            updateStatus(`MESH: ${Object.keys(connections).length} PEERS`, true);
-            sync(c);
-        });
-        c.on('data', data => {
-            if (data.type === 'list') { remoteFiles[c.peer] = data.files; renderRemote(); }
-            if (data.type === 'req') upload(data.name, c);
-            if (data.type === 'meta') download(data, c);
-        });
-        c.on('close', () => { delete connections[c.peer]; delete remoteFiles[c.peer]; renderRemote(); });
-    }
-
-    function updateStatus(t, a) {
-        const e = document.getElementById('status');
-        e.innerText = t;
-        a ? e.classList.add('active') : e.classList.remove('active');
-    }
-
-    document.getElementById('fileIn').onchange = (e) => {
-        for (let f of e.target.files) {
-            myFiles[f.name] = f;
-            document.getElementById('myList').innerHTML += `<div style="padding:5px; font-size:12px; border-bottom:1px solid #333">${f.name}</div>`;
-        }
-        Object.values(connections).forEach(c => sync(c));
-    };
-
-    function sync(c) { if (c?.open) c.send({ type: 'list', files: Object.values(myFiles).map(f => ({ name: f.name, size: f.size })) }); }
-
-    function renderRemote() {
-        const ui = document.getElementById('peerList'); ui.innerHTML = "";
-        Object.entries(remoteFiles).forEach(([pid, files]) => {
-            files.forEach(f => {
-                ui.innerHTML += `<div style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid #333; margin-bottom:5px">
-                    <span style="font-size:12px">${f.name}</span>
-                    <button class="btn" style="padding:2px 8px; font-size:11px" onclick="connections['${pid}'].send({type:'req', name:'${f.name}'})">GET</button>
-                </div>`;
-            });
-        });
-    }
-
-    // --- SEQUENTIAL BINARY UPLOAD ---
-    async function upload(name, c) {
-        const f = myFiles[name];
-        const tid = Math.random().toString(36).substr(2, 5);
-        createRow(tid, name, 'UPLOADING');
-        
-        c.send({ type: 'meta', name: f.name, size: f.size, tid: tid });
-        
-        const buf = await f.arrayBuffer();
-        let off = 0;
-        while (off < f.size) {
-            if (c.dataChannel.bufferedAmount > 1000000) { await new Promise(r => setTimeout(r, 40)); continue; }
-            c.send(buf.slice(off, off + CHUNK_SIZE));
-            off += CHUNK_SIZE;
-            updateUI(tid, off, f.size);
-        }
-        
-        // CRITICAL: Send EOF signal only after the loop finishes
-        setTimeout(() => {
-            c.send({ type: 'eof', tid: tid });
-            document.getElementById(`tag-${tid}`).innerText = "SENT";
-        }, 500);
-    }
-
-    // --- SEQUENTIAL BINARY DOWNLOAD ---
-    function download(meta, c) {
-        createRow(meta.tid, meta.name, 'RECEIVING');
-        let receivedSize = 0, chunks = [];
-        
-        const handler = (data) => {
-            // Check for EOF signal specifically
-            if (data.type === 'eof' && data.tid === meta.tid) {
-                finalizeDownload(meta.tid, meta.name, chunks);
-                c.off('data', handler);
-                return;
-            }
-
-            if (data.type) return; // Ignore other control messages
-            
-            chunks.push(data);
-            receivedSize += data.byteLength;
-            updateUI(meta.tid, receivedSize, meta.size);
-        };
-        c.on('data', handler);
-    }
-
-    function finalizeDownload(tid, name, chunks) {
-        const tag = document.getElementById(`tag-${tid}`);
-        tag.innerText = "ASSEMBLING...";
-        
-        // Use a blob to merge all fragments into one raw file
-        const blob = new Blob(chunks, { type: 'application/octet-stream' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name;
-        
-        // Trigger download
-        a.click();
-        
-        tag.innerText = "COMPLETE";
-        tag.style.color = "var(--success)";
-        URL.revokeObjectURL(url); // Clean memory
-    }
-
-    function createRow(id, name, type) {
-        document.getElementById('transfers').innerHTML += `
-            <div class="transfer-row" id="row-${id}">
-                <div><div id="tag-${id}" style="font-size:9px; font-weight:bold; color:var(--p)">${type}</div><div style="font-size:11px; overflow:hidden;">${name}</div></div>
-                <progress id="bar-${id}" value="0" max="100"></progress>
-                <div id="perc-${id}" style="font-size:11px; text-align:right;">0%</div>
-            </div>`;
-    }
-
-    function updateUI(id, curr, total) {
-        const p = Math.floor((Math.min(curr, total) / total) * 100);
-        if(document.getElementById(`bar-${id}`)) document.getElementById(`bar-${id}`).value = p;
-        if(document.getElementById(`perc-${id}`)) document.getElementById(`perc-${id}`).innerText = p + "%";
-    }
-</script>
+<script src="app.js"></script>
 </body>
 </html>
