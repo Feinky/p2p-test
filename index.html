@@ -1,109 +1,164 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>P2P Turbo Transfer</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P Radar Transfer</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; padding: 50px; background: #f4f4f9; }
-        #drop-zone { border: 2px dashed #007bff; padding: 40px; border-radius: 20px; background: white; transition: 0.3s; }
-        #status { margin-top: 20px; font-weight: bold; color: #555; }
-        .progress-container { width: 100%; background: #ddd; height: 20px; border-radius: 10px; margin-top: 10px; display: none; }
-        #progress-bar { width: 0%; height: 100%; background: #28a745; border-radius: 10px; }
+        :root { --primary: #007bff; --success: #28a745; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 2rem; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+        .radar { width: 100px; height: 100px; border-radius: 50%; border: 2px solid var(--primary); margin: 0 auto 20px; position: relative; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { transform: scale(0.95); opacity: 1; } 70% { transform: scale(1.1); opacity: 0.3; } 100% { transform: scale(0.95); opacity: 1; } }
+        #drop-zone { border: 2px dashed #ccc; padding: 20px; border-radius: 15px; cursor: pointer; margin: 20px 0; transition: 0.3s; }
+        #drop-zone:hover { border-color: var(--primary); background: #f8f9ff; }
+        .progress-box { display: none; margin-top: 20px; }
+        .progress-bar { width: 100%; background: #eee; height: 10px; border-radius: 5px; overflow: hidden; }
+        #fill { width: 0%; height: 100%; background: var(--success); transition: width 0.1s; }
+        #status { font-size: 0.9rem; color: #666; margin-bottom: 10px; }
     </style>
 </head>
 <body>
-    <h1>🚀 P2P Turbo Transfer</h1>
-    <div id="drop-zone">Drag & Drop a file here or click to select</div>
-    <input type="file" id="fileInput" style="display:none">
+
+<div class="card">
+    <div class="radar"></div>
+    <h2>P2P Radar</h2>
+    <div id="status">Initializing discovery...</div>
     
-    <div id="status">Connecting to network...</div>
-    <div class="progress-container" id="progCont">
-        <div id="progress-bar"></div>
+    <div id="drop-zone">
+        <strong>Click or Drag File</strong>
+        <p style="font-size: 0.8rem; color: #999;">Supports files over 50MB</p>
     </div>
-    <p id="share-url"></p>
+    <input type="file" id="fileInput" style="display:none">
 
-    <script>
-        const status = document.getElementById('status');
-        const progBar = document.getElementById('progress-bar');
-        const progCont = document.getElementById('progCont');
-        const shareUrl = document.getElementById('share-url');
+    <div class="progress-box" id="progressBox">
+        <div id="file-info" style="font-size: 0.8rem; margin-bottom: 5px;">0%</div>
+        <div class="progress-bar"><div id="fill"></div></div>
+    </div>
+</div>
 
-        // 1. Automatic Room Setup
-        const roomId = window.location.hash.substring(1) || Math.random().toString(36).substr(2, 9);
-        if (!window.location.hash) window.location.hash = roomId;
+<script>
+    const status = document.getElementById('status');
+    const fill = document.getElementById('fill');
+    const info = document.getElementById('file-info');
+    const box = document.getElementById('progressBox');
+    const fileInput = document.getElementById('fileInput');
+    const dropZone = document.getElementById('drop-zone');
 
-        const peer = new Peer(roomId);
+    let peer = null;
+    let activeConn = null;
+
+    // 1. DISCOVERY LOGIC: Use Public IP to find "Local" peers
+    async function init() {
+        try {
+            const res = await fetch('https://api.ipify.org?format=json');
+            const data = await res.json();
+            const ipGroup = data.ip.replace(/\./g, '-');
+            
+            // We create two specific roles: A 'Host' and a 'Peer'
+            // In a real local network, the first one becomes the 'Host'
+            setupPeer(ipGroup);
+        } catch (e) {
+            status.innerText = "Connection error. Check internet.";
+        }
+    }
+
+    function setupPeer(ipGroup) {
+        // Try to be the host first
+        const hostId = `radar-${ipGroup}-host`;
+        const clientId = `radar-${ipGroup}-${Math.floor(Math.random() * 999)}`;
+        
+        peer = new Peer(clientId);
 
         peer.on('open', (id) => {
-            status.innerText = "Ready! Share this link to connect:";
-            shareUrl.innerHTML = `<a href="${window.location.href}" target="_blank">${window.location.href}</a>`;
+            status.innerText = "Scanning for nearby devices...";
+            // Attempt to connect to the "Host" of this IP
+            const conn = peer.connect(hostId);
+            handleConnection(conn);
+        });
+
+        // Also act as a host for others
+        const hostPeer = new Peer(hostId);
+        hostPeer.on('connection', (conn) => {
+            handleConnection(conn);
+        });
+
+        peer.on('error', (err) => console.log("Peer error:", err));
+    }
+
+    function handleConnection(conn) {
+        conn.on('open', () => {
+            activeConn = conn;
+            status.innerText = "✅ Connected to device!";
+            status.style.color = "var(--success)";
+        });
+
+        conn.on('data', async (data) => {
+            if (data.type === 'meta') {
+                window.incomingMeta = data;
+                window.incomingChunks = [];
+                box.style.display = 'block';
+            } else {
+                window.incomingChunks.push(data);
+                let currentSize = window.incomingChunks.length * 16384;
+                let percent = Math.floor((currentSize / window.incomingMeta.size) * 100);
+                updateProgress(percent, "Receiving...");
+
+                if (currentSize >= window.incomingMeta.size) {
+                    const blob = new Blob(window.incomingChunks);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = window.incomingMeta.name;
+                    a.click();
+                    status.innerText = "🎉 File Saved!";
+                    box.style.display = 'none';
+                }
+            }
+        });
+    }
+
+    // 2. LARGE FILE SENDING LOGIC (Buffer Controlled)
+    async function sendFile(file) {
+        if (!activeConn) return alert("Wait for a connection first!");
+        
+        box.style.display = 'block';
+        activeConn.send({ type: 'meta', name: file.name, size: file.size });
+
+        const chunkSize = 16384; // 16KB
+        let offset = 0;
+
+        while (offset < file.size) {
+            // BACKPRESSURE: If buffer > 1MB, wait. Essential for 50MB+ files.
+            if (activeConn.dataChannel.bufferedAmount > 1048576) {
+                await new Promise(r => setTimeout(r, 100));
+                continue;
+            }
+
+            const chunk = file.slice(offset, offset + chunkSize);
+            const buffer = await chunk.arrayBuffer();
+            activeConn.send(buffer);
             
-            // Auto-connect if someone else is already in the room
-            // Note: In a real app, you'd use a small 'lobby' check, 
-            // but here we wait for the second person to initiate 'peer.connect'
-        });
+            offset += chunkSize;
+            let percent = Math.floor((offset / file.size) * 100);
+            updateProgress(percent, "Sending...");
+        }
+        status.innerText = "✅ Transfer Complete!";
+    }
 
-        // 2. Receiving Logic
-        peer.on('connection', (conn) => {
-            status.innerText = "Connected! Receiving file...";
-            let receivedChunks = [];
-            let metadata = null;
+    function updateProgress(p, label) {
+        const val = Math.min(p, 100);
+        fill.style.width = val + "%";
+        info.innerText = `${label} ${val}%`;
+    }
 
-            conn.on('data', (data) => {
-                if (data.type === 'metadata') {
-                    metadata = data;
-                    progCont.style.display = 'block';
-                } else {
-                    receivedChunks.push(data);
-                    let progress = (receivedChunks.length * 16384 / metadata.size) * 100;
-                    progBar.style.width = Math.min(progress, 100) + "%";
+    // UI Events
+    dropZone.onclick = () => fileInput.click();
+    fileInput.onchange = (e) => sendFile(e.target.files[0]);
 
-                    if (receivedChunks.length * 16384 >= metadata.size) {
-                        const blob = new Blob(receivedChunks);
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = metadata.name;
-                        a.click();
-                        status.innerText = "🎉 File Downloaded!";
-                    }
-                }
-            });
-        });
+    init();
+</script>
 
-        // 3. Sending Logic (with Buffer Monitoring)
-        const sendFile = (file) => {
-            const conn = peer.connect(roomId); // Connect to the peer in the room
-            conn.on('open', async () => {
-                status.innerText = "Sending " + file.name;
-                progCont.style.display = 'block';
-                
-                // Send metadata first
-                conn.send({ type: 'metadata', name: file.name, size: file.size });
-
-                const chunkSize = 16384; // 16KB chunks
-                let offset = 0;
-
-                while (offset < file.size) {
-                    // BUFFER MONITOR: Prevents crashing on 50MB+ files
-                    if (conn.dataChannel.bufferedAmount > 1000000) { // 1MB buffer limit
-                        await new Promise(res => setTimeout(res, 50)); 
-                        continue;
-                    }
-
-                    const chunk = file.slice(offset, offset + chunkSize);
-                    const buffer = await chunk.arrayBuffer();
-                    conn.send(buffer);
-                    offset += chunkSize;
-                    progBar.style.width = (offset / file.size * 100) + "%";
-                }
-                status.innerText = "✅ Sent Successfully!";
-            });
-        };
-
-        // UI Listeners
-        document.getElementById('drop-zone').onclick = () => document.getElementById('fileInput').click();
-        document.getElementById('fileInput').onchange = (e) => sendFile(e.target.files[0]);
-    </script>
 </body>
 </html>
