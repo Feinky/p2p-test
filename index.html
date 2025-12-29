@@ -2,173 +2,152 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Titan P2P | Stable Sync</title>
+    <title>Titan P2P | Binary Strict</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        :root { --p: #1a9fff; --bg: #0b0e14; --card: #1c1c1e; --text: #ffffff; --success: #4c6b22; }
-        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; }
-        header { background: #000; padding: 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--p); }
-        main { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; flex-grow: 1; background: #2c2c2e; overflow: hidden; }
-        .panel { background: var(--card); padding: 20px; display: flex; flex-direction: column; overflow: hidden; }
-        .file-list { flex-grow: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 8px; margin-top: 10px; }
-        #monitor { background: #171a21; border-top: 1px solid #333; min-height: 140px; padding: 15px; overflow-y: auto; }
-        .transfer-item { display: grid; grid-template-columns: 100px 1fr 80px; align-items: center; gap: 15px; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 4px; margin-bottom: 5px; }
-        progress { width: 100%; height: 12px; accent-color: var(--p); }
-        .btn { background: var(--p); color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .log-msg { font-size: 0.7rem; color: #888; font-family: monospace; }
+        :root { --p: #1a9fff; --bg: #0b0e14; --card: #1c1c1e; --text: #ffffff; }
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .app { width: 100%; max-width: 500px; background: var(--card); border-radius: 15px; padding: 20px; box-shadow: 0 10px 30px #000; }
+        .btn { background: var(--p); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 10px; }
+        input { width: 100%; padding: 10px; box-sizing: border-box; background: #222; border: 1px solid #444; color: white; border-radius: 8px; }
+        .monitor { margin-top: 20px; background: #000; padding: 15px; border-radius: 10px; }
+        progress { width: 100%; height: 10px; accent-color: var(--p); }
+        .status { font-size: 0.8rem; color: #888; margin-top: 5px; display: flex; justify-content: space-between; }
     </style>
 </head>
 <body>
 
-<header>
-    <div style="font-weight: 900;">TITAN P2P</div>
-    <div style="display:flex; gap:10px;">
-        <input type="text" id="roomIn" placeholder="Room Name..." style="background:#222; border:1px solid #444; color:white; padding:5px;">
-        <button class="btn" onclick="init()">CONNECT</button>
-    </div>
-</header>
+<div class="app">
+    <h2 style="margin-top:0">Titan Binary Transfer</h2>
+    <input type="text" id="room" placeholder="Enter Room Name...">
+    <button class="btn" onclick="init()">CONNECT ROOM</button>
 
-<main>
-    <div class="panel">
-        <button class="btn" style="background:var(--success)" onclick="document.getElementById('picker').click()">+ ADD FILE</button>
-        <input type="file" id="picker" multiple style="display:none">
-        <div id="myFiles" class="file-list"></div>
+    <div id="controls" style="display:none; margin-top:20px;">
+        <button class="btn" style="background:#4c6b22" onclick="document.getElementById('file').click()">+ CHOOSE ANY FILE TYPE</button>
+        <input type="file" id="file" style="display:none">
+        <div id="peerFiles" style="margin-top:15px; border-top: 1px solid #333; padding-top:15px;"></div>
     </div>
-    <div class="panel">
-        <div id="peerFiles" class="file-list"></div>
-        <div id="logs" class="log-msg" style="margin-top:10px; height: 40px; overflow: hidden;">System Ready...</div>
-    </div>
-</main>
 
-<div id="monitor">
-    <div id="transferContainer"></div>
+    <div id="monitor" class="monitor" style="display:none">
+        <div id="fname" style="font-weight:bold; font-size:0.9rem; margin-bottom:10px">Filename</div>
+        <progress id="bar" value="0" max="100"></progress>
+        <div class="status">
+            <span id="mode">Idle</span>
+            <span id="perc">0%</span>
+        </div>
+    </div>
 </div>
 
 <script>
     let peer, conn, myFiles = {};
-
-    function log(msg) { document.getElementById('logs').innerText = "> " + msg; }
+    const CHUNK_SIZE = 16384; // 16KB - Most stable size for WebRTC
 
     function init() {
-        const room = document.getElementById('roomIn').value.trim();
-        if (!room) return;
+        const r = document.getElementById('room').value.trim();
+        if (!r) return;
         if (peer) peer.destroy();
         
-        // Use Google STUN to bypass firewalls
-        const cfg = { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }};
-        peer = new Peer(`TITAN-${room}-A`, cfg);
-
-        peer.on('error', (err) => {
-            if (err.type === 'unavailable-id') {
-                peer = new Peer(`TITAN-${room}-B`, cfg);
-                setupPeer(`TITAN-${room}-A`);
-            } else { log("Error: " + err.type); }
+        peer = new Peer(`TITAN-STRICT-${r}-A`, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
+        peer.on('error', () => {
+            peer = new Peer(`TITAN-STRICT-${r}-B`, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
+            setup(`TITAN-STRICT-${r}-A`);
         });
-        peer.on('open', () => { log("Room Joined"); setupPeer(`TITAN-${room}-B`); });
+        peer.on('open', () => setup(`TITAN-STRICT-${r}-B`));
     }
 
-    function setupPeer(target) {
+    function setup(target) {
+        document.getElementById('controls').style.display = 'block';
         peer.on('connection', c => handle(c));
         setInterval(() => { if(!conn || !conn.open) handle(peer.connect(target)); }, 3000);
     }
 
     function handle(c) {
-        if (conn && conn.open) return;
         conn = c;
-        conn.on('open', () => { log("Peer Connected"); sync(); });
-        conn.on('data', data => {
-            if (data.type === 'list') renderPeerFiles(data.files);
-            if (data.type === 'req') startUpload(data.name);
-            if (data.type === 'meta') startDownload(data);
-            if (data.type === 'ack') log("Peer received: " + data.name);
+        conn.on('open', () => { if(Object.keys(myFiles).length > 0) sync(); });
+        conn.on('data', async (data) => {
+            if (data.type === 'list') renderList(data.files);
+            if (data.type === 'req') sendFile(data.name);
+            if (data.type === 'meta') receiveFile(data);
         });
     }
 
-    document.getElementById('picker').onchange = (e) => {
-        for (let f of e.target.files) {
-            myFiles[f.name] = f;
-            document.getElementById('myFiles').innerHTML += `<div style="padding:8px; border-bottom:1px solid #333">${f.name}</div>`;
-        }
+    document.getElementById('file').onchange = (e) => {
+        for (let f of e.target.files) { myFiles[f.name] = f; }
         sync();
     };
 
-    function sync() { if (conn?.open) conn.send({ type: 'list', files: Object.values(myFiles).map(f => ({ name: f.name, size: f.size })) }); }
+    function sync() { if (conn?.open) conn.send({ type: 'list', files: Object.values(myFiles).map(f => ({name: f.name, size: f.size})) }); }
 
-    function renderPeerFiles(files) {
-        const ui = document.getElementById('peerFiles'); ui.innerHTML = "";
+    function renderList(files) {
+        const ui = document.getElementById('peerFiles'); ui.innerHTML = "<b>Available:</b>";
         files.forEach(f => {
-            const row = document.createElement('div');
-            row.style = "display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid #333";
-            row.innerHTML = `<span>${f.name}</span> <button class="btn" style="padding:2px 8px; font-size:0.7rem" onclick="conn.send({type:'req', name:'${f.name}'})">GET</button>`;
-            ui.appendChild(row);
+            ui.innerHTML += `<div style="display:flex; justify-content:space-between; margin-top:10px;">
+                <span style="font-size:0.9rem">${f.name}</span>
+                <button onclick="conn.send({type:'req', name:'${f.name}'})" style="cursor:pointer; background:none; border:1px solid var(--p); color:var(--p); padding:2px 8px; border-radius:4px;">GET</button>
+            </div>`;
         });
     }
 
-    // --- FIXED UPLOAD WITH BACKPRESSURE ---
-    async function startUpload(name) {
+    // --- STRICT BINARY SENDING ---
+    async function sendFile(name) {
         const file = myFiles[name];
-        const tid = Math.random().toString(36).substr(2, 5);
-        createRow(tid, file.name, 'UPLOADING');
-        
-        conn.send({ type: 'meta', name: file.name, size: file.size, tid: tid });
+        updateUI(name, 'SENDING');
+        conn.send({ type: 'meta', name: file.name, size: file.size });
 
-        const reader = file.stream().getReader();
-        let sent = 0;
-        while (true) {
-            // BACKPRESSURE: If outgoing buffer is > 1MB, wait!
+        const buffer = await file.arrayBuffer();
+        let offset = 0;
+
+        while (offset < file.size) {
+            // BACKPRESSURE: Pause if buffer is full
             if (conn.dataChannel.bufferedAmount > 1000000) {
-                await new Promise(r => setTimeout(r, 40)); 
+                await new Promise(r => setTimeout(r, 30));
                 continue;
             }
-            const { done, value } = await reader.read();
-            if (done) break;
-            conn.send(value);
-            sent += value.length;
-            updateUI(tid, sent, file.size);
+
+            const chunk = buffer.slice(offset, offset + CHUNK_SIZE);
+            conn.send(chunk); // Send raw binary slice
+            offset += CHUNK_SIZE;
+            
+            const p = Math.floor((offset / file.size) * 100);
+            document.getElementById('bar').value = p;
+            document.getElementById('perc').innerText = p + "%";
         }
+        document.getElementById('mode').innerText = "SENT ✅";
     }
 
-    // --- FIXED DOWNLOAD ---
-    function startDownload(meta) {
-        createRow(meta.tid, meta.name, 'RECEIVING');
-        let received = 0;
-        let packages = [];
+    // --- STRICT BINARY RECEIVING ---
+    function receiveFile(meta) {
+        updateUI(meta.name, 'RECEIVING');
+        let receivedSize = 0;
+        let fileParts = [];
 
         const onData = (data) => {
-            if (data.type) return; 
-            packages.push(data);
-            received += data.byteLength;
-            updateUI(meta.tid, received, meta.size);
+            if (data.type) return; // Ignore control messages
 
-            if (received >= meta.size) {
-                conn.off('data', onData); // Stop listening to file chunks
-                const blob = new Blob(packages);
+            fileParts.push(data);
+            receivedSize += data.byteLength;
+            
+            const p = Math.min(100, Math.floor((receivedSize / meta.size) * 100));
+            document.getElementById('bar').value = p;
+            document.getElementById('perc').innerText = p + "%";
+
+            if (receivedSize >= meta.size) {
+                conn.off('data', onData);
+                const blob = new Blob(fileParts, { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = meta.name;
-                a.click();
-                document.getElementById(`tag-${meta.tid}`).innerText = "COMPLETE";
-                conn.send({ type: 'ack', name: meta.name });
+                a.href = url; a.download = meta.name; a.click();
+                document.getElementById('mode').innerText = "SAVED ✅";
+                fileParts = []; // Clear RAM
             }
         };
         conn.on('data', onData);
     }
 
-    function createRow(id, name, type) {
-        const container = document.getElementById('transferContainer');
-        container.innerHTML = `
-            <div class="transfer-item" id="row-${id}">
-                <div id="tag-${id}" style="font-size:10px; font-weight:bold; color:var(--p)">${type}</div>
-                <progress id="bar-${id}" value="0" max="100"></progress>
-                <div id="perc-${id}" style="font-size:11px; text-align:right;">0%</div>
-            </div>
-        ` + container.innerHTML;
-    }
-
-    function updateUI(id, curr, total) {
-        const p = Math.floor((curr / total) * 100);
-        if(document.getElementById(`bar-${id}`)) document.getElementById(`bar-${id}`).value = p;
-        if(document.getElementById(`perc-${id}`)) document.getElementById(`perc-${id}`).innerText = p + "%";
+    function updateUI(name, mode) {
+        document.getElementById('monitor').style.display = 'block';
+        document.getElementById('fname').innerText = name;
+        document.getElementById('mode').innerText = mode;
     }
 </script>
 </body>
