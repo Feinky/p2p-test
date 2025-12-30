@@ -81,51 +81,45 @@ async function upload(name, c) {
     const f = myFiles[name];
     if (!f) return;
 
-    const PART_SIZE = 250 * 1024 * 1024; // 250MB per slice
+    const PART_SIZE = 250 * 1024 * 1024;
     const totalParts = Math.ceil(f.size / PART_SIZE);
     
-    // Loop through each slice and send it as a separate "file"
     for (let i = 0; i < totalParts; i++) {
         const start = i * PART_SIZE;
         const end = Math.min(start + PART_SIZE, f.size);
-        const sliver = f.slice(start, end); // Logical slice (no RAM used yet)
-        
+        const sliver = f.slice(start, end);
         const partName = `${f.name}.part${i + 1}_of_${totalParts}`;
         const tid = Math.random().toString(36).substr(2, 5);
 
-        // Convert slice to buffer for this specific part
-        const buf = await sliver.arrayBuffer(); 
-        const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
-        const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        // Notify receiver
+        c.send({ type: 'meta', name: partName, size: sliver.size, tid: tid, hash: 'SKIP_HASH_FOR_SPEED' });
 
-        createRow(tid, partName, 'SENDING');
-        
-        // Notify receiver about this specific part
-        c.send({ 
-            type: 'meta', 
-            name: partName, 
-            size: sliver.size, 
-            tid: tid, 
-            hash: fileHash 
-        });
+        // Stream the data without loading the whole sliver into RAM
+        const reader = sliver.stream().getReader();
+        let sentBytes = 0;
 
-        let off = 0;
-        while (off < sliver.size) {
-            if (!c.open) break;
-            // Backpressure check
-            if (c.dataChannel.bufferedAmount > 1048576) { 
-                await new Promise(r => setTimeout(r, 50)); 
-                continue; 
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            // Wait for network room (Backpressure)
+            if (c.dataChannel.bufferedAmount > 1048576) {
+                await new Promise(resolve => {
+                    const check = () => {
+                        if (c.dataChannel.bufferedAmount < 524288) resolve();
+                        else setTimeout(check, 20);
+                    };
+                    check();
+                });
             }
-            c.send(buf.slice(off, off + CHUNK_SIZE));
-            off += CHUNK_SIZE;
-            updateUI(tid, off, sliver.size);
+
+            c.send(value);
+            sentBytes += value.byteLength;
+            updateUI(tid, sentBytes, sliver.size);
         }
         
         if (c.open) c.send({ type: 'eof', tid: tid });
-        
-        // Crucial: Wait 1 second between parts to let browser clear memory
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 500)); // Cool down
     }
 }
 
@@ -215,3 +209,4 @@ function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
+
