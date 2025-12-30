@@ -89,39 +89,61 @@ function renderRemote() {
 async function upload(name, c) {
     const f = myFiles[name];
     if (!f) return;
-    const tid = Math.random().toString(36).substr(2, 5);
-    createRow(tid, f.name, 'SENDING');
 
-    // Notify receiver
-    c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: 'STREAM' });
+    const tid = Math.random().toString(36).substr(2, 5);
+    createRow(tid, f.name, 'VERIFYING & SENDING');
+
+    // 1. Get the "Gold Standard" hash (already stored when file was added)
+    // If you don't store it on add, you can generate it here.
+    const originalHash = f.originalHash; 
+
+    // 2. Initialize the "Live Hasher"
+    const liveHasher = crypto.subtle.digest('SHA-256', new Uint8Array(0)); // Start empty
+    let chunksProcessed = []; 
+
+    c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: originalHash });
 
     let off = 0;
     while (off < f.size) {
         if (!c.open) break;
 
-        // 1. Backpressure
-        if (c.dataChannel.bufferedAmount > 1048576) { 
-            await new Promise(r => setTimeout(r, 50)); 
-            continue; 
+        if (c.dataChannel.bufferedAmount > 1048576) {
+            await new Promise(r => setTimeout(r, 50));
+            continue;
         }
 
         try {
-            // 2. THE FIX: Attempt to read the slice
             const slice = f.slice(off, off + CHUNK_SIZE);
-            const buf = await slice.arrayBuffer(); // The point of failure
+            const buf = await slice.arrayBuffer();
             
+            // 3. Update the Live Data pool
+            chunksProcessed.push(new Uint8Array(buf));
+
             c.send(buf);
             off += CHUNK_SIZE;
             updateUI(tid, off, f.size);
-        } catch (readError) {
-            console.error("Read failed at offset", off, readError);
-            // Wait 2 seconds and try the SAME chunk again instead of crashing
-            await new Promise(r => setTimeout(r, 2000));
-            continue; 
+        } catch (e) {
+            c.send({ type: 'error', tid: tid, message: 'READ_FAIL' });
+            return;
         }
     }
-    
-    if (c.open) setTimeout(() => c.send({ type: 'eof', tid: tid }), 500);
+
+    // 4. FINAL HOST CHECK
+    const finalBlob = new Blob(chunksProcessed);
+    const finalBuf = await finalBlob.arrayBuffer();
+    const finalHashBuffer = await crypto.subtle.digest('SHA-256', finalBuf);
+    const hostSideHash = Array.from(new Uint8Array(finalHashBuffer))
+        .map(b => b.toString(16).padStart(2, '0')).join('');
+
+    if (hostSideHash === originalHash) {
+        console.log("Host confirmed: Sent data matches original file.");
+        if (c.open) c.send({ type: 'eof', tid: tid });
+    } else {
+        console.error("Host Error: Data changed during read!");
+        document.getElementById(`tag-${tid}`).innerText = "HOST DATA MISMATCH";
+        // Tell receiver to discard the file
+        c.send({ type: 'error', tid: tid, message: 'SOURCE_CORRUPTION' });
+    }
 }
 // RECEIVER: Writes to Disk, not RAM
 async function download(meta, c) {
@@ -212,6 +234,7 @@ function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
+
 
 
 
