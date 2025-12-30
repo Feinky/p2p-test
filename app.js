@@ -84,93 +84,39 @@ function renderRemote() {
         });
     });
 }
-//SenDERRRR
 
 async function upload(name, c) {
     const f = myFiles[name];
     if (!f) return;
-
     const tid = Math.random().toString(36).substr(2, 5);
-    createRow(tid, f.name, 'VERIFYING & SENDING');
-
-    // 1. Get the "Gold Standard" hash (already stored when file was added)
-    // If you don't store it on add, you can generate it here.
-    const originalHash = f.originalHash; 
-
-    // 2. Initialize the "Live Hasher"
-    const liveHasher = crypto.subtle.digest('SHA-256', new Uint8Array(0)); // Start empty
-    let chunksProcessed = []; 
-
-    c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: originalHash });
-
+    const buf = await f.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
+    const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    createRow(tid, f.name, 'SENDING');
+    c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: fileHash });
     let off = 0;
     while (off < f.size) {
         if (!c.open) break;
-
-        if (c.dataChannel.bufferedAmount > 1048576) {
-            await new Promise(r => setTimeout(r, 50));
-            continue;
-        }
-
-        try {
-            const slice = f.slice(off, off + CHUNK_SIZE);
-            const buf = await slice.arrayBuffer();
-            
-            // 3. Update the Live Data pool
-            chunksProcessed.push(new Uint8Array(buf));
-
-            c.send(buf);
-            off += CHUNK_SIZE;
-            updateUI(tid, off, f.size);
-        } catch (e) {
-            c.send({ type: 'error', tid: tid, message: 'READ_FAIL' });
-            return;
-        }
+        if (c.dataChannel.bufferedAmount > 1048576) { await new Promise(r => setTimeout(r, 50)); continue; }
+        c.send(buf.slice(off, off + CHUNK_SIZE));
+        off += CHUNK_SIZE;
+        updateUI(tid, off, f.size);
     }
-
-    // 4. FINAL HOST CHECK
-    const finalBlob = new Blob(chunksProcessed);
-    const finalBuf = await finalBlob.arrayBuffer();
-    const finalHashBuffer = await crypto.subtle.digest('SHA-256', finalBuf);
-    const hostSideHash = Array.from(new Uint8Array(finalHashBuffer))
-        .map(b => b.toString(16).padStart(2, '0')).join('');
-
-    if (hostSideHash === originalHash) {
-        console.log("Host confirmed: Sent data matches original file.");
-        if (c.open) c.send({ type: 'eof', tid: tid });
-    } else {
-        console.error("Host Error: Data changed during read!");
-        document.getElementById(`tag-${tid}`).innerText = "HOST DATA MISMATCH";
-        // Tell receiver to discard the file
-        c.send({ type: 'error', tid: tid, message: 'SOURCE_CORRUPTION' });
-    }
+    if (c.open) setTimeout(() => c.send({ type: 'eof', tid: tid }), 500);
 }
-// RECEIVER: Writes to Disk, not RAM
-async function download(meta, c) {
-    createRow(meta.tid, meta.name, 'DISK ACCESS...');
-    
-    let writable;
-    try {
-        // Asks user where to save BEFORE download starts
-        const handle = await window.showSaveFilePicker({ suggestedName: meta.name });
-        writable = await handle.createWritable();
-    } catch (e) {
-        return; // User cancelled
-    }
 
-    let received = 0;
+function download(meta, c) {
+    createRow(meta.tid, meta.name, 'RECEIVING');
+    let chunks = [];
     const handler = async (data) => {
         if (data.type === 'eof' && data.tid === meta.tid) {
             c.off('data', handler);
-            await writable.close(); // Finalizes file
-            document.getElementById(`tag-${meta.tid}`).innerText = "DONE";
+            finalize(meta.tid, meta.name, chunks, meta.hash, c);
             return;
         }
-
-        if (data instanceof ArrayBuffer || data instanceof Uint8Array) {
-            await writable.write(data); // WRITES DIRECTLY TO DISK
-            received += data.byteLength;
-            updateUI(meta.tid, received, meta.size);
+        if (data instanceof ArrayBuffer || data instanceof Uint8Array || data.byteLength !== undefined) {
+            chunks.push(data);
+            updateUI(meta.tid, chunks.reduce((a, b) => a + b.byteLength, 0), meta.size);
         }
     };
     c.on('data', handler);
@@ -234,8 +180,5 @@ function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
-
-
-
 
 
