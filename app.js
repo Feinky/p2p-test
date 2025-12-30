@@ -77,125 +77,66 @@ function renderRemote() {
     });
 }
 
+// --- SENDER ---
 async function upload(name, c) {
+    const f = myFiles[name];
+    if (!f) return;
+    const tid = Math.random().toString(36).substr(2, 5);
+    const buf = await f.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
+    const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 
-    const f = myFiles[name];
-
-    if (!f) return;
-
-
-
-    const PART_SIZE = 250 * 1024 * 1024; // 250MB per slice
-
-    const totalParts = Math.ceil(f.size / PART_SIZE);
-
-    
-
-    // Loop through each slice and send it as a separate "file"
-
-    for (let i = 0; i < totalParts; i++) {
-
-        const start = i * PART_SIZE;
-
-        const end = Math.min(start + PART_SIZE, f.size);
-
-        const sliver = f.slice(start, end); // Logical slice (no RAM used yet)
-
-        
-
-        const partName = `${f.name}.part${i + 1}_of_${totalParts}`;
-
-        const tid = Math.random().toString(36).substr(2, 5);
-
-
-
-        // Convert slice to buffer for this specific part
-
-        const buf = await sliver.arrayBuffer(); 
-
-        const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
-
-        const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-
-
-
-        createRow(tid, partName, 'SENDING');
-
-        
-
-        // Notify receiver about this specific part
-
-        c.send({ 
-
-            type: 'meta', 
-
-            name: partName, 
-
-            size: sliver.size, 
-
-            tid: tid, 
-
-            hash: fileHash 
-
-        });
-
-
-
-        let off = 0;
-
-        while (off < sliver.size) {
-
-            if (!c.open) break;
-
-            // Backpressure check
-
-            if (c.dataChannel.bufferedAmount > 1048576) { 
-
-                await new Promise(r => setTimeout(r, 50)); 
-
-                continue; 
-
-            }
-
-            c.send(buf.slice(off, off + CHUNK_SIZE));
-
-            off += CHUNK_SIZE;
-
-            updateUI(tid, off, sliver.size);
-
-        }
-
-        
-
-        if (c.open) c.send({ type: 'eof', tid: tid });
-
-        
-
-        // Crucial: Wait 1 second between parts to let browser clear memory
-
-        await new Promise(r => setTimeout(r, 1000));
-
-    }
-
+    createRow(tid, f.name, 'SENDING');
+    c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: fileHash });
+    
+    let off = 0;
+    while (off < f.size) {
+        if (!c.open) break;
+        if (c.dataChannel.bufferedAmount > 1048576) { await new Promise(r => setTimeout(r, 50)); continue; }
+        c.send(buf.slice(off, off + CHUNK_SIZE));
+        off += CHUNK_SIZE;
+        updateUI(tid, off, f.size);
+    }
+    if (c.open) setTimeout(() => c.send({ type: 'eof', tid: tid }), 500);
 }
 
-
-// --- RECEIVER (Handles parts individually for stability) ---
+// --- RECEIVER (Pro Streaming) ---
 async function download(meta, c) {
-    createRow(meta.tid, meta.name, 'RECEIVING');
-    let chunks = [];
+    createRow(meta.tid, meta.name, 'PREPARING...');
+    let writable = null;
+    let fileHandle = null;
+    let chunks = []; // Fallback for Firefox/Safari
+
+    // Check if Browser supports direct-to-disk
+    const canStream = 'showSaveFilePicker' in window;
+
+    if (canStream) {
+        try {
+            fileHandle = await window.showSaveFilePicker({ suggestedName: meta.name });
+            writable = await fileHandle.createWritable();
+            document.getElementById(`tag-${meta.tid}`).innerText = "STREAMING";
+        } catch(e) { console.log("User cancelled or stream error"); return; }
+    }
 
     const handler = async (data) => {
         if (data.type === 'eof' && data.tid === meta.tid) {
             c.off('data', handler);
-            // Using RAM fallback because 250MB parts fit in memory easily
-            finalizeRAM(meta.tid, meta.name, chunks, meta.hash, c);
+            if (writable) {
+                await writable.close();
+                verifyLargeFile(fileHandle, meta.hash, meta.tid, c, meta.name);
+            } else {
+                finalizeRAM(meta.tid, meta.name, chunks, meta.hash, c);
+            }
             return;
         }
         if (data instanceof ArrayBuffer || data instanceof Uint8Array || data.byteLength !== undefined) {
-            chunks.push(data);
-            const currentTotal = chunks.reduce((a, b) => a + b.byteLength, 0);
-            updateUI(meta.tid, currentTotal, meta.size);
+            if (writable) {
+                await writable.write(data); // Write direct to disk
+            } else {
+                chunks.push(data); // Fallback to RAM
+            }
+            const currentSize = writable ? (await fileHandle.getFile()).size : chunks.reduce((a,b)=>a+b.byteLength, 0);
+            updateUI(meta.tid, currentSize, meta.size);
         }
     };
     c.on('data', handler);
@@ -267,3 +208,4 @@ function updateStatus(t, a) {
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
 
+ 
