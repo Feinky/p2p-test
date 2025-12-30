@@ -4,26 +4,23 @@ const CHUNK_SIZE = 16384;
 async function joinMesh() {
     const room = document.getElementById('roomInput').value.trim();
     if (!room) return;
-    
-    // Cleanup previous peer if it exists
     if (peer) peer.destroy();
 
     const myId = `TITAN-${room}-${Math.floor(Math.random() * 10000)}`;
     peer = new Peer(myId, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
-    
-    peer.on('open', () => { 
-        updateStatus("ONLINE", true); 
-        discover(room); 
-    });
-    
-    peer.on('connection', c => handleConn(c));
-}
 
-function discover(room) {
-    for(let i=1; i<=5; i++) {
-        const t = `TITAN-LOBBY-${room}-${i}`;
-        if (peer.id !== t) handleConn(peer.connect(t));
-    }
+    peer.on('open', (id) => {
+        updateStatus("ONLINE", true);
+        // Discovery Loop
+        for(let i=1; i<=5; i++) {
+            const t = `TITAN-${room}-${i}`;
+            const t2 = `TITAN-LOBBY-${room}-${i}`;
+            if (id !== t) handleConn(peer.connect(t));
+            if (id !== t2) handleConn(peer.connect(t2));
+        }
+    });
+
+    peer.on('connection', c => handleConn(c));
 }
 
 function handleConn(c) {
@@ -36,76 +33,71 @@ function handleConn(c) {
     });
 
     c.on('data', data => {
-        // SENDER LOGIC: Responds to initial requests OR auto-retries
+        // This handles the "GET" click and the "Auto-Retry" yell
         if (data.type === 'req' || data.type === 'retry') {
-            console.log("Upload triggered by:", data.type);
             upload(data.name, c); 
-        }
-        if (data.type === 'list') { 
-            remoteFiles[c.peer] = data.files; 
-            renderRemote(); 
-        }
-        if (data.type === 'meta') {
+        } else if (data.type === 'list') {
+            remoteFiles[c.peer] = data.files;
+            renderRemote();
+        } else if (data.type === 'meta') {
             download(data, c);
         }
     });
 
-    c.on('close', () => {
-        delete connections[c.peer];
-        delete remoteFiles[c.peer];
+    c.on('close', () => { 
+        delete connections[c.peer]; 
+        delete remoteFiles[c.peer]; 
         renderRemote();
-        updateStatus(`MESH: ${Object.keys(connections).length}`, Object.keys(connections).length > 0);
+        updateStatus(`MESH: ${Object.keys(connections).length}`, !!Object.keys(connections).length);
     });
 }
 
-// --- FILE SELECTION ---
-document.getElementById('fileInput').onchange = (e) => {
+// --- FILE SELECTION (Matches your HTML id="fileInput") ---
+document.getElementById('fileInput').addEventListener('change', (e) => {
     for (let f of e.target.files) {
         myFiles[f.name] = f;
         document.getElementById('myList').innerHTML += `<div class="file-row">${f.name}</div>`;
     }
     Object.values(connections).forEach(c => sync(c));
-};
+});
 
 function sync(c) { 
     if (c?.open) c.send({ type: 'list', files: Object.values(myFiles).map(f => ({ name: f.name, size: f.size })) }); 
 }
 
 function renderRemote() {
-    const ui = document.getElementById('peerList'); 
+    const ui = document.getElementById('peerList');
     ui.innerHTML = "";
     Object.entries(remoteFiles).forEach(([pid, files]) => {
         files.forEach(f => {
             ui.innerHTML += `<div class="file-row">
                 <span>${f.name}</span>
-                <button class="btn" style="padding:2px 8px; font-size:11px" onclick="connections['${pid}'].send({type:'req', name:'${f.name}'})">GET</button>
+                <button class="btn" style="padding:2px 8px; font-size:10px" onclick="connections['${pid}'].send({type:'req', name:'${f.name}'})">GET</button>
             </div>`;
         });
     });
 }
 
-// --- BINARY SENDER ---
+// --- SENDER ---
 async function upload(name, c) {
     const f = myFiles[name];
-    if (!f) return;
+    if(!f) return;
     const tid = Math.random().toString(36).substr(2, 5);
     
-    createRow(tid, name, 'HASHING');
-
+    // Hash first to ensure receiver can verify
     const buf = await f.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
     const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 
+    createRow(tid, name, 'SENDING');
     c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: fileHash });
     
     let off = 0;
-    document.getElementById(`tag-${tid}`).innerText = "SENDING";
-
     while (off < f.size) {
         if (!c.open) break;
-        if (c.dataChannel.bufferedAmount > 1000000) { 
+        if (c.dataChannel.bufferedAmount > 1000000) {
             await new Promise(r => setTimeout(r, 50)); 
-            continue; 
+            continue;
         }
         c.send(buf.slice(off, off + CHUNK_SIZE));
         off += CHUNK_SIZE;
@@ -114,58 +106,45 @@ async function upload(name, c) {
     if (c.open) setTimeout(() => c.send({ type: 'eof', tid: tid }), 500);
 }
 
-// --- BINARY RECEIVER WITH AUTO-RETRY ---
+// --- RECEIVER ---
 function download(meta, c) {
-    // 1. UI Cleanup: Find old bar by filename and kill it
-    const oldRow = document.querySelector(`[data-filename="${meta.name}"]`);
-    if (oldRow) oldRow.remove();
+    // Logic: Remove any old bar with the same filename to handle retries cleanly
+    const existing = document.querySelector(`[data-filename="${meta.name}"]`);
+    if (existing) existing.remove();
 
     createRow(meta.tid, meta.name, 'RECEIVING', meta.name);
     let chunks = [];
     
     const handler = async (data) => {
         if (data.type === 'eof' && data.tid === meta.tid) {
-            c.off('data', handler); // Stop listening to this specific stream
+            c.off('data', handler);
             
-            // 2. Build the file from chunks
             const blob = new Blob(chunks);
             const resBuf = await blob.arrayBuffer();
             const resHashBuf = await crypto.subtle.digest('SHA-256', resBuf);
             const resHash = Array.from(new Uint8Array(resHashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
 
             const tag = document.getElementById(`tag-${meta.tid}`);
-            
             if (resHash === meta.hash) {
-                // SUCCESS
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
                 a.download = meta.name;
                 a.click();
                 tag.innerText = "VERIFIED";
-                tag.style.color = "var(--success)";
+                tag.style.color = "#44ff44";
             } else {
-                // 3. THE FIX: Wait for the "Pipe" to drain before yelling
-                tag.innerText = "CORRUPT: RE-ORDERING...";
-                tag.style.color = "#ff4444";
+                // THE AUTO-RETRY TRIGGER
+                tag.innerText = "CORRUPT: RESTARTING...";
+                tag.style.color = "#ffbb00";
                 
-                console.log("Integrity check failed. Requesting fresh copy...");
-                
-                // We wait 1000ms to ensure the DataChannel is 'idle'
+                // Wait for buffer to clear, then yell "retry" to the sender
                 setTimeout(() => {
-                    if (c.open) {
-                        c.send({ 
-                            type: 'retry', 
-                            name: meta.name 
-                        });
-                    } else {
-                        tag.innerText = "CONNECTION LOST";
-                    }
-                }, 1000); 
+                    if (c.open) c.send({ type: 'retry', name: meta.name });
+                }, 1000);
             }
             return;
         }
-
-        // Standard chunk collection
+        
         if (data instanceof ArrayBuffer || data instanceof Uint8Array || data.byteLength !== undefined) {
             chunks.push(data);
             updateUI(meta.tid, chunks.length * CHUNK_SIZE, meta.size);
@@ -178,7 +157,7 @@ function download(meta, c) {
 function createRow(id, name, label, filename = "") {
     const html = `<div class="transfer-row" id="row-${id}" data-filename="${filename || name}">
         <div><div id="tag-${id}" style="font-size:9px; font-weight:bold; color:var(--p)">${label}</div><div style="font-size:11px;">${name}</div></div>
-        <progress id="bar-${id}" value="0" max="100"></progress>
+        <progress id="bar-${id}" value="0" max="100" style="width:100%"></progress>
         <div id="perc-${id}" style="font-size:11px; text-align:right;">0%</div>
     </div>`;
     document.getElementById('transfers').insertAdjacentHTML('afterbegin', html);
@@ -197,4 +176,3 @@ function updateStatus(t, a) {
     e.innerText = t;
     a ? e.classList.add('active') : e.classList.remove('active');
 }
-
