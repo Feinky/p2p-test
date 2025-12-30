@@ -58,84 +58,95 @@ function handleConn(c) {
     });
 }
 
-// --- SENDER ---
+// --- SENDER: Constant Memory Stream ---
 async function upload(name, c) {
     const f = myFiles[name];
     if (!f) return;
 
-    const totalParts = Math.ceil(f.size / PART_SIZE);
-    
-    for (let i = 0; i < totalParts; i++) {
-        if (!c.open) break;
-        
-        const start = i * PART_SIZE;
-        const end = Math.min(start + PART_SIZE, f.size);
-        const sliver = f.slice(start, end);
-        const partName = `${f.name}.part${i + 1}_of_${totalParts}`;
-        const tid = Math.random().toString(36).substr(2, 5);
-        
-        activeTransfers[tid] = true;
-        createRow(tid, partName, 'SENDING', c.peer);
+    const tid = Math.random().toString(36).substr(2, 5);
+    activeTransfers[tid] = true;
+    createRow(tid, f.name, 'STREAMING OUT', c.peer);
 
-        c.send({ type: 'meta', name: partName, size: sliver.size, tid: tid });
+    // Send Metadata
+    c.send({ type: 'meta', name: f.name, size: f.size, tid: tid });
 
-        const reader = sliver.stream().getReader();
-        let sent = 0;
+    // Use the native stream reader to read the file in tiny chunks
+    const reader = f.stream().getReader();
+    let sentBytes = 0;
 
+    try {
         while (activeTransfers[tid]) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            // Proper Backpressure: Wait for data channel to clear
-            if (c.dataChannel.bufferedAmount > 1048576) {
-                await new Promise(r => {
-                    const check = () => (c.dataChannel.bufferedAmount < 512000) ? r() : setTimeout(check, 30);
+            // SMART BACKPRESSURE: If the network pipe is full, wait.
+            if (c.dataChannel.bufferedAmount > 1048576) { // 1MB Buffer Limit
+                await new Promise(resolve => {
+                    const check = () => {
+                        if (c.dataChannel.bufferedAmount < 256000) resolve();
+                        else setTimeout(check, 30);
+                    };
                     check();
                 });
             }
 
+            // Send the chunk (value is a Uint8Array)
             c.send(value);
-            sent += value.byteLength;
-            updateUI(tid, sent, sliver.size);
+            sentBytes += value.byteLength;
+            updateUI(tid, sentBytes, f.size);
         }
 
-        if (activeTransfers[tid]) c.send({ type: 'eof', tid: tid });
-        await new Promise(r => setTimeout(r, 500)); 
+        if (activeTransfers[tid]) {
+            c.send({ type: 'eof', tid: tid });
+            document.getElementById(`tag-${tid}`).innerText = "SENT";
+        }
+    } catch (err) {
+        console.error("Stream failed", err);
     }
 }
-
-// --- RECEIVER ---
+// --- RECEIVER: Direct-to-Disk Stream ---
 async function download(meta, c) {
     activeTransfers[meta.tid] = true;
-    createRow(meta.tid, meta.name, 'RECEIVING', c.peer);
-    let chunks = [];
-    let received = 0;
+    createRow(meta.tid, meta.name, 'AUTHORIZING...', c.peer);
 
-    const handler = (data) => {
+    let writable;
+    try {
+        // 1. Ask the user where to save the file BEFORE data arrives
+        const handle = await window.showSaveFilePicker({ suggestedName: meta.name });
+        writable = await handle.createWritable();
+        document.getElementById(`tag-${meta.tid}`).innerText = "WRITING TO DISK";
+    } catch (e) {
+        console.log("User denied file access");
+        return;
+    }
+
+    let receivedBytes = 0;
+
+    const handler = async (data) => {
         if (!activeTransfers[meta.tid]) {
             c.off('data', handler);
+            await writable.abort();
             return;
         }
 
         if (data.type === 'eof' && data.tid === meta.tid) {
             c.off('data', handler);
-            const blob = new Blob(chunks);
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = meta.name; a.click();
-            document.getElementById(`tag-${meta.tid}`).innerText = "DONE";
-            chunks = [];
+            await writable.close(); // Saves the file
+            document.getElementById(`tag-${meta.tid}`).innerText = "SAVED";
+            document.getElementById(`tag-${meta.tid}`).style.color = "#8bc34a";
             return;
         }
 
+        // Handle binary data chunks
         if (data instanceof ArrayBuffer || data instanceof Uint8Array) {
-            chunks.push(data);
-            received += data.byteLength;
-            updateUI(meta.tid, received, meta.size);
+            await writable.write(data); // Write chunk directly to disk
+            receivedBytes += data.byteLength;
+            updateUI(meta.tid, receivedBytes, meta.size);
         }
     };
+
     c.on('data', handler);
 }
-
 // --- UI HELPERS ---
 function createRow(id, name, type, peerId) {
     const html = `
@@ -199,3 +210,4 @@ function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
+
