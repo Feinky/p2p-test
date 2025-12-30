@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Titan P2P | Pro GB+</title>
+    <title>Titan P2P | Pro</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
 <body>
+
 <header>
     <div class="logo">TITAN <span>P2P</span></div>
     <div class="nav-controls">
@@ -16,6 +17,7 @@
         <button class="btn" onclick="joinMesh()">JOIN</button>
     </div>
 </header>
+
 <main>
     <section class="panel">
         <div class="panel-header">
@@ -25,6 +27,7 @@
         <input type="file" id="fileInput" multiple style="display:none">
         <div id="myList" class="file-area"></div>
     </section>
+
     <section class="panel">
         <div class="panel-header">
             <h3>NETWORK</h3>
@@ -33,9 +36,11 @@
         <div id="peerList" class="file-area"></div>
     </section>
 </main>
+
 <footer id="monitor">
     <div id="transfers"></div>
 </footer>
+
 <script src="app.js"></script>
 </body>
 </html>
