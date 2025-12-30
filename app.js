@@ -11,6 +11,7 @@ async function joinMesh() {
 
     peer.on('open', (id) => {
         updateStatus("ONLINE", true);
+        // Look for slots 1-5
         for(let i=1; i<=5; i++) {
             const t = `TITAN-LOBBY-${room}-${i}`;
             if (peer.id !== t) handleConn(peer.connect(t));
@@ -60,7 +61,6 @@ function renderPeers() {
     }).join('');
 }
 
-// --- FILE SELECTION ---
 document.getElementById('fileInput').onchange = (e) => {
     for (let f of e.target.files) {
         myFiles[f.name] = f;
@@ -78,33 +78,26 @@ function renderRemote() {
     Object.entries(remoteFiles).forEach(([pid, files]) => {
         files.forEach(f => {
             ui.innerHTML += `<div class="file-row">
-                <span>${f.name} <small style="color:var(--p); font-size:9px;">(from ${pid.split('-').pop()})</small></span>
+                <span>${f.name} <small style="color:var(--p); font-size:9px;">(${pid.split('-').pop()})</small></span>
                 <button class="btn" style="padding:4px 10px; font-size:10px" onclick="connections['${pid}'].send({type:'req', name:'${f.name}'})">GET</button>
             </div>`;
         });
     });
 }
 
-// --- SENDER ---
 async function upload(name, c) {
     const f = myFiles[name];
     if (!f) return;
     const tid = Math.random().toString(36).substr(2, 5);
-    
     const buf = await f.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
     const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-
     createRow(tid, f.name, 'SENDING');
     c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: fileHash });
-    
     let off = 0;
     while (off < f.size) {
         if (!c.open) break;
-        if (c.dataChannel.bufferedAmount > 1048576) {
-            await new Promise(r => setTimeout(r, 50)); 
-            continue;
-        }
+        if (c.dataChannel.bufferedAmount > 1048576) { await new Promise(r => setTimeout(r, 50)); continue; }
         c.send(buf.slice(off, off + CHUNK_SIZE));
         off += CHUNK_SIZE;
         updateUI(tid, off, f.size);
@@ -112,11 +105,9 @@ async function upload(name, c) {
     if (c.open) setTimeout(() => c.send({ type: 'eof', tid: tid }), 500);
 }
 
-// --- RECEIVER ---
 function download(meta, c) {
     createRow(meta.tid, meta.name, 'RECEIVING');
     let chunks = [];
-    
     const handler = async (data) => {
         if (data.type === 'eof' && data.tid === meta.tid) {
             c.off('data', handler);
@@ -134,28 +125,22 @@ function download(meta, c) {
 async function finalize(tid, name, chunks, expectedHash) {
     const tag = document.getElementById(`tag-${tid}`);
     tag.innerText = "VERIFYING...";
-    
     const blob = new Blob(chunks);
     const actualBuf = await blob.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', actualBuf);
     const actualHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-
     if (actualHash !== expectedHash) {
-        tag.innerText = "CORRUPT";
-        tag.style.color = "#ff4444";
+        tag.innerText = "CORRUPT"; tag.style.color = "#ff4444";
     } else {
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = name; a.click();
-        tag.innerText = "DONE";
-        tag.style.color = "#8bc34a";
+        const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+        tag.innerText = "DONE"; tag.style.color = "#8bc34a";
     }
 }
 
-// --- UI HELPERS ---
 function createRow(id, name, type) {
     const html = `<div class="transfer-row" id="row-${id}">
-        <div><div id="tag-${id}" style="font-size:9px; font-weight:bold; color:var(--p)">${type}</div><div style="font-size:11px; overflow:hidden;">${name}</div></div>
+        <div><div id="tag-${id}" style="font-size:9px; font-weight:bold; color:var(--p)">${type}</div><div style="font-size:11px;">${name}</div></div>
         <progress id="bar-${id}" value="0" max="100"></progress>
         <div id="perc-${id}" style="font-size:11px; text-align:right;">0%</div>
     </div>`;
@@ -170,6 +155,5 @@ function updateUI(id, curr, total) {
 
 function updateStatus(t, a) {
     const e = document.getElementById('status');
-    e.innerText = t;
-    a ? e.classList.add('active') : e.classList.remove('active');
+    e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
