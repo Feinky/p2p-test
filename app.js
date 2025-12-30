@@ -57,94 +57,103 @@ function handleConn(c) {
         updateStatus(`MESH: ${Object.keys(connections).length}`, !!Object.keys(connections).length);
     });
 }
-
-// --- SENDER: Constant Memory Stream ---
+// --- SENDER (With Re-send Capability) ---
 async function upload(name, c) {
     const f = myFiles[name];
     if (!f) return;
-
     const tid = Math.random().toString(36).substr(2, 5);
-    activeTransfers[tid] = true;
-    createRow(tid, f.name, 'STREAMING OUT', c.peer);
+    createRow(tid, f.name, 'SYNCING...');
 
-    // Send Metadata
-    c.send({ type: 'meta', name: f.name, size: f.size, tid: tid });
-
-    // Use the native stream reader to read the file in tiny chunks
-    const reader = f.stream().getReader();
-    let sentBytes = 0;
-
-    try {
-        while (activeTransfers[tid]) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            // SMART BACKPRESSURE: If the network pipe is full, wait.
-            if (c.dataChannel.bufferedAmount > 1048576) { // 1MB Buffer Limit
-                await new Promise(resolve => {
-                    const check = () => {
-                        if (c.dataChannel.bufferedAmount < 256000) resolve();
-                        else setTimeout(check, 30);
-                    };
-                    check();
-                });
-            }
-
-            // Send the chunk (value is a Uint8Array)
-            c.send(value);
-            sentBytes += value.byteLength;
-            updateUI(tid, sentBytes, f.size);
-        }
-
-        if (activeTransfers[tid]) {
-            c.send({ type: 'eof', tid: tid });
-            document.getElementById(`tag-${tid}`).innerText = "SENT";
-        }
-    } catch (err) {
-        console.error("Stream failed", err);
-    }
-}
-// --- RECEIVER: Direct-to-Disk Stream ---
-async function download(meta, c) {
-    activeTransfers[meta.tid] = true;
-    createRow(meta.tid, meta.name, 'AUTHORIZING...', c.peer);
-
-    let writable;
-    try {
-        // 1. Ask the user where to save the file BEFORE data arrives
-        const handle = await window.showSaveFilePicker({ suggestedName: meta.name });
-        writable = await handle.createWritable();
-        document.getElementById(`tag-${meta.tid}`).innerText = "WRITING TO DISK";
-    } catch (e) {
-        console.log("User denied file access");
-        return;
-    }
-
-    let receivedBytes = 0;
-
-    const handler = async (data) => {
-        if (!activeTransfers[meta.tid]) {
-            c.off('data', handler);
-            await writable.abort();
-            return;
-        }
-
-        if (data.type === 'eof' && data.tid === meta.tid) {
-            c.off('data', handler);
-            await writable.close(); // Saves the file
-            document.getElementById(`tag-${meta.tid}`).innerText = "SAVED";
-            document.getElementById(`tag-${meta.tid}`).style.color = "#8bc34a";
-            return;
-        }
-
-        // Handle binary data chunks
-        if (data instanceof ArrayBuffer || data instanceof Uint8Array) {
-            await writable.write(data); // Write chunk directly to disk
-            receivedBytes += data.byteLength;
-            updateUI(meta.tid, receivedBytes, meta.size);
+    const BLOCK_SIZE = 10 * 1024 * 1024; // 10MB Blocks
+    
+    // Handler for "Retry" requests from receiver
+    const requestHandler = async (data) => {
+        if (data.type === 'retry_block' && data.tid === tid) {
+            console.warn(`Block ${data.index} corrupted. Re-sending...`);
+            sendBlock(data.index);
         }
     };
+    c.on('data', requestHandler);
 
+    async function sendBlock(index) {
+        const start = index * BLOCK_SIZE;
+        const end = Math.min(start + BLOCK_SIZE, f.size);
+        const blob = f.slice(start, end);
+        const buf = await blob.arrayBuffer();
+        
+        // Calculate hash for just this 10MB block
+        const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+        const hash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+        c.send({ type: 'block_meta', tid: tid, index: index, hash: hash, size: blob.size });
+
+        // Send actual data in CHUNKS (64KB)
+        let off = 0;
+        while (off < buf.byteLength) {
+            if (c.dataChannel.bufferedAmount > 1048576) {
+                await new Promise(r => setTimeout(r, 30));
+                continue;
+            }
+            c.send(buf.slice(off, off + CHUNK_SIZE));
+            off += CHUNK_SIZE;
+        }
+        c.send({ type: 'block_end', tid: tid, index: index });
+    }
+
+    // Start sending blocks sequentially
+    for (let i = 0; i < Math.ceil(f.size / BLOCK_SIZE); i++) {
+        if (!activeTransfers[tid]) break;
+        await sendBlock(i);
+        // Wait for receiver to "Approve" the block before starting next one
+        await new Promise(resolve => {
+            const waiter = (data) => {
+                if (data.type === 'block_ok' && data.index === i) {
+                    c.off('data', waiter);
+                    resolve();
+                }
+            };
+            c.on('data', waiter);
+        });
+        updateUI(tid, (i + 1) * BLOCK_SIZE, f.size);
+    }
+    c.send({ type: 'eof', tid: tid });
+}
+// --- RECEIVER (With Hash Verification) ---
+async function download(meta, c) {
+    activeTransfers[meta.tid] = true;
+    const handle = await window.showSaveFilePicker({ suggestedName: meta.name });
+    const writable = await handle.createWritable();
+    
+    let currentBlockChunks = [];
+    let expectedHash = "";
+
+    const handler = async (data) => {
+        if (data.type === 'block_meta') {
+            expectedHash = data.hash;
+            currentBlockChunks = [];
+        } else if (data.type === 'block_end') {
+            // VERIFY BLOCK
+            const blockBlob = new Blob(currentBlockChunks);
+            const blockBuf = await blockBlob.arrayBuffer();
+            const actualHashBuf = await crypto.subtle.digest('SHA-256', blockBuf);
+            const actualHash = Array.from(new Uint8Array(actualHashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+            if (actualHash === expectedHash) {
+                await writable.write(blockBuf); // Good data! Save to disk.
+                c.send({ type: 'block_ok', tid: meta.tid, index: data.index });
+            } else {
+                // CORRUPT! Tell sender to try again
+                console.error("Block Corrupt. Requesting retry...");
+                c.send({ type: 'retry_block', tid: meta.tid, index: data.index });
+            }
+        } else if (data instanceof ArrayBuffer) {
+            currentBlockChunks.push(data);
+        } else if (data.type === 'eof') {
+            await writable.close();
+            c.off('data', handler);
+            updateStatus("FILE VERIFIED & SAVED", true);
+        }
+    };
     c.on('data', handler);
 }
 // --- UI HELPERS ---
@@ -210,4 +219,5 @@ function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
+
 
