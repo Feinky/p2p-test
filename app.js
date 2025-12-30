@@ -111,7 +111,7 @@ function download(meta, c) {
     const handler = async (data) => {
         if (data.type === 'eof' && data.tid === meta.tid) {
             c.off('data', handler);
-            finalize(meta.tid, meta.name, chunks, meta.hash);
+            finalize(meta.tid, meta.name, chunks, meta.hash, c);
             return;
         }
         if (data instanceof ArrayBuffer || data instanceof Uint8Array || data.byteLength !== undefined) {
@@ -122,19 +122,35 @@ function download(meta, c) {
     c.on('data', handler);
 }
 
-async function finalize(tid, name, chunks, expectedHash) {
+async function finalize(tid, name, chunks, expectedHash, c) {
     const tag = document.getElementById(`tag-${tid}`);
+    const row = document.getElementById(`row-${tid}`);
     tag.innerText = "VERIFYING...";
+    
     const blob = new Blob(chunks);
     const actualBuf = await blob.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', actualBuf);
     const actualHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
     if (actualHash !== expectedHash) {
-        tag.innerText = "CORRUPT"; tag.style.color = "#ff4444";
+        tag.innerText = "CORRUPT";
+        tag.style.color = "#ff4444";
+        
+        // --- ADD RETRY BUTTON ---
+        // We find the percentage div and replace it with a button
+        const percDiv = document.getElementById(`perc-${tid}`);
+        if (percDiv) {
+            percDiv.innerHTML = `<button class="btn" style="padding:2px 5px; font-size:9px; background:orange;" 
+                onclick="this.parentElement.innerHTML='...'; connections['${c.peer}'].send({type:'req', name:'${name}'})">
+                RETRY
+            </button>`;
+        }
     } else {
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = name; a.click();
-        tag.innerText = "DONE"; tag.style.color = "#8bc34a";
+        const a = document.createElement('a');
+        a.href = url; a.download = name; a.click();
+        tag.innerText = "DONE";
+        tag.style.color = "#8bc34a";
     }
 }
 
@@ -157,3 +173,4 @@ function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
+
