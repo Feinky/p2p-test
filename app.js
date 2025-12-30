@@ -38,6 +38,7 @@ function handleConn(c) {
     c.on('data', data => {
         // SENDER LOGIC: Responds to initial requests OR auto-retries
         if (data.type === 'req' || data.type === 'retry') {
+            console.log("Upload triggered by:", data.type);
             upload(data.name, c); 
         }
         if (data.type === 'list') { 
@@ -115,19 +116,18 @@ async function upload(name, c) {
 
 // --- BINARY RECEIVER WITH AUTO-RETRY ---
 function download(meta, c) {
-    // Remove old bar if this is a retry
+    // 1. UI Cleanup: Find old bar by filename and kill it
     const oldRow = document.querySelector(`[data-filename="${meta.name}"]`);
     if (oldRow) oldRow.remove();
 
     createRow(meta.tid, meta.name, 'RECEIVING', meta.name);
     let chunks = [];
-    let receivedBytes = 0;
     
     const handler = async (data) => {
         if (data.type === 'eof' && data.tid === meta.tid) {
-            c.off('data', handler);
+            c.off('data', handler); // Stop listening to this specific stream
             
-            // VERIFY HASH
+            // 2. Build the file from chunks
             const blob = new Blob(chunks);
             const resBuf = await blob.arrayBuffer();
             const resHashBuf = await crypto.subtle.digest('SHA-256', resBuf);
@@ -136,28 +136,39 @@ function download(meta, c) {
             const tag = document.getElementById(`tag-${meta.tid}`);
             
             if (resHash === meta.hash) {
-                const url = URL.createObjectURL(blob);
+                // SUCCESS
                 const a = document.createElement('a');
-                a.href = url; a.download = meta.name; a.click();
+                a.href = URL.createObjectURL(blob);
+                a.download = meta.name;
+                a.click();
                 tag.innerText = "VERIFIED";
                 tag.style.color = "var(--success)";
             } else {
-                // THE AUTO-RETRY LOGIC
-                tag.innerText = "CORRUPT: RETRYING...";
+                // 3. THE FIX: Wait for the "Pipe" to drain before yelling
+                tag.innerText = "CORRUPT: RE-ORDERING...";
                 tag.style.color = "#ff4444";
                 
-                // Automatically re-trigger the GET request
+                console.log("Integrity check failed. Requesting fresh copy...");
+                
+                // We wait 1000ms to ensure the DataChannel is 'idle'
                 setTimeout(() => {
-                    c.send({ type: 'retry', name: meta.name });
-                }, 1000);
+                    if (c.open) {
+                        c.send({ 
+                            type: 'retry', 
+                            name: meta.name 
+                        });
+                    } else {
+                        tag.innerText = "CONNECTION LOST";
+                    }
+                }, 1000); 
             }
             return;
         }
 
+        // Standard chunk collection
         if (data instanceof ArrayBuffer || data instanceof Uint8Array || data.byteLength !== undefined) {
             chunks.push(data);
-            receivedBytes += data.byteLength;
-            updateUI(meta.tid, receivedBytes, meta.size);
+            updateUI(meta.tid, chunks.length * CHUNK_SIZE, meta.size);
         }
     };
     c.on('data', handler);
@@ -186,3 +197,4 @@ function updateStatus(t, a) {
     e.innerText = t;
     a ? e.classList.add('active') : e.classList.remove('active');
 }
+
