@@ -84,38 +84,45 @@ function renderRemote() {
         });
     });
 }
+//SenDERRRR
 
-// SENDER: No longer uses .arrayBuffer()
 async function upload(name, c) {
     const f = myFiles[name];
     if (!f) return;
     const tid = Math.random().toString(36).substr(2, 5);
     createRow(tid, f.name, 'SENDING');
 
-    // For 1GB+, we don't hash the whole file upfront (too slow/RAM heavy)
-    // We send a signature: Name + Size + Last Modified
-    const signature = `${f.name}-${f.size}-${f.lastModified}`;
-    c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: signature });
+    // Notify receiver
+    c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: 'STREAM' });
 
-    const reader = f.stream().getReader(); // STREAMING START
     let off = 0;
+    while (off < f.size) {
+        if (!c.open) break;
 
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done || !c.open) break;
-
-        // Backpressure check (Critical for speed)
-        if (c.dataChannel.bufferedAmount > 1048576) {
-            await new Promise(r => setTimeout(r, 30));
+        // 1. Backpressure
+        if (c.dataChannel.bufferedAmount > 1048576) { 
+            await new Promise(r => setTimeout(r, 50)); 
+            continue; 
         }
 
-        c.send(value);
-        off += value.byteLength;
-        updateUI(tid, off, f.size);
+        try {
+            // 2. THE FIX: Attempt to read the slice
+            const slice = f.slice(off, off + CHUNK_SIZE);
+            const buf = await slice.arrayBuffer(); // The point of failure
+            
+            c.send(buf);
+            off += CHUNK_SIZE;
+            updateUI(tid, off, f.size);
+        } catch (readError) {
+            console.error("Read failed at offset", off, readError);
+            // Wait 2 seconds and try the SAME chunk again instead of crashing
+            await new Promise(r => setTimeout(r, 2000));
+            continue; 
+        }
     }
+    
     if (c.open) setTimeout(() => c.send({ type: 'eof', tid: tid }), 500);
 }
-
 // RECEIVER: Writes to Disk, not RAM
 async function download(meta, c) {
     createRow(meta.tid, meta.name, 'DISK ACCESS...');
@@ -205,6 +212,7 @@ function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
+
 
 
 
