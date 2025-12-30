@@ -38,6 +38,7 @@ header {
     color: #777;
     font-weight: bold;
     border: 1px solid var(--border);
+    white-space: nowrap;
 }
 
 .pill.active {
@@ -69,7 +70,7 @@ main {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 8px;
+    padding: 10px 8px;
     border-bottom: 1px solid #333;
     font-size: 13px;
 }
@@ -93,10 +94,16 @@ main {
     padding: 15px 25px;
     overflow-y: auto;
 }
+#monitor .btn {
+    padding: 2px 8px;
+    font-size: 10px;
+    height: auto;
+    line-height: 1;
+}
 
 .transfer-row {
     display: grid;
-    grid-template-columns: 120px 1fr 80px; /* Wider last column for Retry button */
+    grid-template-columns: 120px 1fr 60px;
     align-items: center;
     gap: 15px;
     background: rgba(255,255,255,0.03);
@@ -110,4 +117,6 @@ progress { width: 100%; height: 8px; accent-color: var(--p); }
 
 @media (max-width: 600px) {
     main { grid-template-columns: 1fr; overflow-y: auto; }
+    .panel { min-height: 300px; }
 }
+
