@@ -138,12 +138,9 @@ async function finalize(tid, name, chunks, expectedHash, c) {
         
         // --- ADD RETRY BUTTON ---
         // We find the percentage div and replace it with a button
-        const percDiv = document.getElementById(`perc-${tid}`);
+        const percDiv = document.getElementById(`perc-${tid}`); // Check this ID!
         if (percDiv) {
-            percDiv.innerHTML = `<button class="btn" style="padding:2px 5px; font-size:9px; background:orange;" 
-                onclick="this.parentElement.innerHTML='...'; connections['${c.peer}'].send({type:'req', name:'${name}'})">
-                RETRY
-            </button>`;
+            percDiv.innerHTML = `<button class="btn" onclick="retryTransfer('${name}', '${c.peer}', '${tid}')">RETRY</button>`;
         }
     } else {
         const url = URL.createObjectURL(blob);
@@ -169,8 +166,19 @@ function updateUI(id, curr, total) {
     if(document.getElementById(`perc-${id}`)) document.getElementById(`perc-${id}`).innerText = p + "%";
 }
 
+function retryTransfer(name, peerId, oldTid) {
+    // Remove the failed row so a new one can take its place
+    const oldRow = document.getElementById(`row-${oldTid}`);
+    if (oldRow) oldRow.remove();
+
+    // Re-request the file
+    if (connections[peerId]) {
+        connections[peerId].send({ type: 'req', name: name });
+    }
+}
 function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
+
 
