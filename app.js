@@ -9,16 +9,14 @@ async function joinMesh() {
     const myId = `TITAN-${room}-${Math.floor(Math.random() * 10000)}`;
     peer = new Peer(myId, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
 
-    peer.on('open', (id) => {
+    peer.on('open', () => {
         updateStatus("ONLINE", true);
-        // Look for slots 1-5
         for(let i=1; i<=5; i++) {
             const t = `TITAN-LOBBY-${room}-${i}`;
             if (peer.id !== t) handleConn(peer.connect(t));
         }
         tryLobby(room, 1);
     });
-
     peer.on('connection', c => handleConn(c));
 }
 
@@ -44,21 +42,15 @@ function handleConn(c) {
         if (data.type === 'meta') download(data, c);
     });
     c.on('close', () => { 
-        delete connections[c.peer]; 
-        delete remoteFiles[c.peer]; 
-        renderPeers();
-        renderRemote(); 
+        delete connections[c.peer]; delete remoteFiles[c.peer]; 
+        renderPeers(); renderRemote(); 
         updateStatus(`MESH: ${Object.keys(connections).length}`, !!Object.keys(connections).length);
     });
 }
 
 function renderPeers() {
     const gallery = document.getElementById('peerGallery');
-    if (!gallery) return;
-    gallery.innerHTML = Object.keys(connections).map(pid => {
-        const shortId = pid.split('-').pop();
-        return `<div class="pill active" style="font-size:9px;">ID: ${shortId}</div>`;
-    }).join('');
+    if (gallery) gallery.innerHTML = Object.keys(connections).map(pid => `<div class="pill active">ID: ${pid.split('-').pop()}</div>`).join('');
 }
 
 document.getElementById('fileInput').onchange = (e) => {
@@ -85,6 +77,7 @@ function renderRemote() {
     });
 }
 
+// --- SENDER ---
 async function upload(name, c) {
     const f = myFiles[name];
     if (!f) return;
@@ -92,8 +85,10 @@ async function upload(name, c) {
     const buf = await f.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
     const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
     createRow(tid, f.name, 'SENDING');
     c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: fileHash });
+    
     let off = 0;
     while (off < f.size) {
         if (!c.open) break;
@@ -105,55 +100,97 @@ async function upload(name, c) {
     if (c.open) setTimeout(() => c.send({ type: 'eof', tid: tid }), 500);
 }
 
-function download(meta, c) {
-    createRow(meta.tid, meta.name, 'RECEIVING');
-    let chunks = [];
+// --- RECEIVER (Pro Streaming) ---
+async function download(meta, c) {
+    createRow(meta.tid, meta.name, 'PREPARING...');
+    let writable = null;
+    let fileHandle = null;
+    let chunks = []; // Fallback for Firefox/Safari
+
+    // Check if Browser supports direct-to-disk
+    const canStream = 'showSaveFilePicker' in window;
+
+    if (canStream) {
+        try {
+            fileHandle = await window.showSaveFilePicker({ suggestedName: meta.name });
+            writable = await fileHandle.createWritable();
+            document.getElementById(`tag-${meta.tid}`).innerText = "STREAMING";
+        } catch(e) { console.log("User cancelled or stream error"); return; }
+    }
+
     const handler = async (data) => {
         if (data.type === 'eof' && data.tid === meta.tid) {
             c.off('data', handler);
-            finalize(meta.tid, meta.name, chunks, meta.hash, c);
+            if (writable) {
+                await writable.close();
+                verifyLargeFile(fileHandle, meta.hash, meta.tid, c, meta.name);
+            } else {
+                finalizeRAM(meta.tid, meta.name, chunks, meta.hash, c);
+            }
             return;
         }
         if (data instanceof ArrayBuffer || data instanceof Uint8Array || data.byteLength !== undefined) {
-            chunks.push(data);
-            updateUI(meta.tid, chunks.reduce((a, b) => a + b.byteLength, 0), meta.size);
+            if (writable) {
+                await writable.write(data); // Write direct to disk
+            } else {
+                chunks.push(data); // Fallback to RAM
+            }
+            const currentSize = writable ? (await fileHandle.getFile()).size : chunks.reduce((a,b)=>a+b.byteLength, 0);
+            updateUI(meta.tid, currentSize, meta.size);
         }
     };
     c.on('data', handler);
 }
 
-async function finalize(tid, name, chunks, expectedHash, c) {
+// Verification for Streaming
+async function verifyLargeFile(handle, expectedHash, tid, c, name) {
     const tag = document.getElementById(`tag-${tid}`);
-    const row = document.getElementById(`row-${tid}`);
     tag.innerText = "VERIFYING...";
-    
+    const file = await handle.getFile();
+    const actualBuf = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', actualBuf);
+    const actualHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    if (actualHash !== expectedHash) {
+        showRetry(tid, name, c);
+    } else {
+        tag.innerText = "DONE"; tag.style.color = "#8bc34a";
+    }
+}
+
+// Verification for RAM Fallback
+async function finalizeRAM(tid, name, chunks, expectedHash, c) {
+    const tag = document.getElementById(`tag-${tid}`);
+    tag.innerText = "VERIFYING...";
     const blob = new Blob(chunks);
     const actualBuf = await blob.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', actualBuf);
     const actualHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 
     if (actualHash !== expectedHash) {
-        tag.innerText = "CORRUPT";
-        tag.style.color = "#ff4444";
-        
-        // --- ADD RETRY BUTTON ---
-        // We find the percentage div and replace it with a button
-        const percDiv = document.getElementById(`perc-${tid}`); // Check this ID!
-        if (percDiv) {
-            percDiv.innerHTML = `<button class="btn" onclick="retryTransfer('${name}', '${c.peer}', '${tid}')">RETRY</button>`;
-        }
+        showRetry(tid, name, c);
     } else {
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = name; a.click();
-        tag.innerText = "DONE";
-        tag.style.color = "#8bc34a";
+        const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+        tag.innerText = "DONE"; tag.style.color = "#8bc34a";
     }
+}
+
+function showRetry(tid, name, c) {
+    const tag = document.getElementById(`tag-${tid}`);
+    const perc = document.getElementById(`perc-${tid}`);
+    tag.innerText = "CORRUPT"; tag.style.color = "#ff4444";
+    perc.innerHTML = `<button class="btn" style="background:#f39c12; color:black; padding:2px 5px;" onclick="retryNow('${name}', '${c.peer}', '${tid}')">RETRY</button>`;
+}
+
+function retryNow(name, pid, oldTid) {
+    document.getElementById(`row-${oldTid}`).remove();
+    if (connections[pid]) connections[pid].send({ type: 'req', name: name });
 }
 
 function createRow(id, name, type) {
     const html = `<div class="transfer-row" id="row-${id}">
-        <div><div id="tag-${id}" style="font-size:9px; font-weight:bold; color:var(--p)">${type}</div><div style="font-size:11px;">${name}</div></div>
+        <div><div id="tag-${id}" style="font-size:9px; font-weight:bold; color:var(--p)">${type}</div><div style="font-size:11px; white-space:nowrap; overflow:hidden;">${name}</div></div>
         <progress id="bar-${id}" value="0" max="100"></progress>
         <div id="perc-${id}" style="font-size:11px; text-align:right;">0%</div>
     </div>`;
@@ -166,19 +203,7 @@ function updateUI(id, curr, total) {
     if(document.getElementById(`perc-${id}`)) document.getElementById(`perc-${id}`).innerText = p + "%";
 }
 
-function retryTransfer(name, peerId, oldTid) {
-    // Remove the failed row so a new one can take its place
-    const oldRow = document.getElementById(`row-${oldTid}`);
-    if (oldRow) oldRow.remove();
-
-    // Re-request the file
-    if (connections[peerId]) {
-        connections[peerId].send({ type: 'req', name: name });
-    }
-}
 function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
-
-
