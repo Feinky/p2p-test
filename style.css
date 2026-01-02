@@ -1,10 +1,9 @@
-/* --- TITAN P2P PRO THEME --- */
 :root {
-    --p: #1a9fff;          /* Primary Blue */
-    --bg: #0b0e14;         /* Deep Black-Blue */
-    --card: #1c1c1e;       /* Panel Gray */
+    --p: #1a9fff;       
+    --bg: #0b0e14;         
+    --card: #1c1c1e;       
     --text: #ffffff;
-    --success: #4c6b22;    /* Forest Green */
+    --success: #4c6b22;    
     --border: #333;
     --danger: #ff4444;
 }
@@ -22,7 +21,6 @@ body {
     overflow: hidden;
 }
 
-/* --- HEADER & NAVIGATION --- */
 header {
     background: #000;
     padding: 12px 20px;
@@ -72,7 +70,6 @@ header {
     background: rgba(76, 107, 34, 0.1);
 }
 
-/* --- MESH INDICATOR (Who is connecting) --- */
 #meshIndicator {
     background: #111;
     padding: 10px 20px;
@@ -113,7 +110,6 @@ header {
     box-shadow: 0 0 5px #8bc34a;
 }
 
-/* --- MAIN LAYOUT --- */
 main {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -144,7 +140,6 @@ main {
     color: #888;
 }
 
-/* --- FILE AREAS --- */
 .file-area {
     flex-grow: 1;
     background: rgba(0,0,0,0.3);
@@ -166,7 +161,6 @@ main {
 
 .file-row:hover { background: rgba(255,255,255,0.02); }
 
-/* --- BUTTONS --- */
 .btn {
     background: var(--p);
     color: white;
@@ -182,7 +176,6 @@ main {
 .btn:hover { filter: brightness(1.2); }
 .btn-alt { background: var(--success); }
 
-/* --- MONITOR & TRANSFERS --- */
 #monitor {
     background: #171a21;
     border-top: 2px solid var(--border);
@@ -215,10 +208,10 @@ progress {
 progress::-webkit-progress-bar { background-color: #333; border-radius: 10px; }
 progress::-webkit-progress-value { background-color: var(--p); border-radius: 10px; }
 
-/* --- RESPONSIVE --- */
 @media (max-width: 768px) {
     main { grid-template-columns: 1fr; overflow-y: auto; }
     .panel { min-height: 400px; border-bottom: 1px solid var(--border); }
     header { flex-direction: column; gap: 10px; height: auto; }
     #monitor { height: 250px; }
 }
+
