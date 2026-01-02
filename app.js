@@ -3,15 +3,25 @@ const CHUNK_SIZE = 16384;
 
 async function joinMesh() {
     const room = document.getElementById('roomInput').value.trim();
-    if (!room) return;
+    if (!room) return alert("Please enter a room name");
     if (peer) peer.destroy();
 
     const myId = `TITAN-${room}-${Math.floor(Math.random() * 10000)}`;
-    peer = new Peer(myId, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
+    
+    // IMPORTANT: SECURE CONFIG FOR GITHUB PAGES (HTTPS)
+    peer = new Peer(myId, {
+        host: '0.peerjs.com',
+        port: 443,
+        secure: true,
+        debug: 1,
+        config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }
+    });
 
     peer.on('open', (id) => {
         updateStatus("ONLINE", true);
-        // Look for slots 1-5
+        console.log("My Peer ID: " + id);
+        
+        // Scan for lobby slots 1-5 to find other peers
         for(let i=1; i<=5; i++) {
             const t = `TITAN-LOBBY-${room}-${i}`;
             if (peer.id !== t) handleConn(peer.connect(t));
@@ -25,41 +35,65 @@ async function joinMesh() {
 function tryLobby(room, s) {
     if (s > 5) return;
     const lId = `TITAN-LOBBY-${room}-${s}`;
-    const lPeer = new Peer(lId, { config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }});
+    const lPeer = new Peer(lId, {
+        host: '0.peerjs.com',
+        port: 443,
+        secure: true,
+        config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }
+    });
+    
     lPeer.on('open', () => lPeer.on('connection', c => handleConn(c)));
-    lPeer.on('error', () => { lPeer.destroy(); tryLobby(room, s+1); });
+    lPeer.on('error', () => { 
+        lPeer.destroy(); 
+        tryLobby(room, s+1); 
+    });
 }
 
 function handleConn(c) {
     if (!c || connections[c.peer]) return;
+
     c.on('open', () => {
         connections[c.peer] = c;
-        updateStatus(`MESH: ${Object.keys(connections).length}`, true);
         renderPeers();
         sync(c);
     });
+
     c.on('data', data => {
-        if (data.type === 'list') { remoteFiles[c.peer] = data.files; renderRemote(); }
+        if (data.type === 'list') { 
+            remoteFiles[c.peer] = data.files; 
+            renderRemote(); 
+        }
         if (data.type === 'req') upload(data.name, c);
         if (data.type === 'meta') download(data, c);
     });
+
     c.on('close', () => { 
         delete connections[c.peer]; 
         delete remoteFiles[c.peer]; 
         renderPeers();
-        renderRemote(); 
-        updateStatus(`MESH: ${Object.keys(connections).length}`, !!Object.keys(connections).length);
+        renderRemote();
     });
 }
 
 function renderPeers() {
     const gallery = document.getElementById('peerGallery');
-    if (!gallery) return;
-    gallery.innerHTML = Object.keys(connections).map(pid => {
+    const countPill = document.getElementById('peerCount');
+    const peers = Object.keys(connections);
+    
+    countPill.style.display = "block";
+    countPill.innerText = `${peers.length} PEERS CONNECTED`;
+
+    gallery.innerHTML = peers.map(pid => {
         const shortId = pid.split('-').pop();
-        return `<div class="pill active" style="font-size:9px;">ID: ${shortId}</div>`;
+        return `
+            <div class="peer-card">
+                <div class="status-dot"></div>
+                ID: ${shortId} (ACTIVE)
+            </div>`;
     }).join('');
 }
+
+// --- FILE LOGIC ---
 
 document.getElementById('fileInput').onchange = (e) => {
     for (let f of e.target.files) {
@@ -74,11 +108,13 @@ function sync(c) {
 }
 
 function renderRemote() {
-    const ui = document.getElementById('peerList'); ui.innerHTML = "";
+    const ui = document.getElementById('peerList'); 
+    ui.innerHTML = "";
     Object.entries(remoteFiles).forEach(([pid, files]) => {
         files.forEach(f => {
-            ui.innerHTML += `<div class="file-row">
-                <span>${f.name} <small style="color:var(--p); font-size:9px;">(${pid.split('-').pop()})</small></span>
+            ui.innerHTML += `
+            <div class="file-row">
+                <span>${f.name} <small style="color:var(--p); font-size:9px;">(Peer ${pid.split('-').pop()})</small></span>
                 <button class="btn" style="padding:4px 10px; font-size:10px" onclick="connections['${pid}'].send({type:'req', name:'${f.name}'})">GET</button>
             </div>`;
         });
@@ -92,8 +128,10 @@ async function upload(name, c) {
     const buf = await f.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
     const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    
     createRow(tid, f.name, 'SENDING');
     c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: fileHash });
+
     let off = 0;
     while (off < f.size) {
         if (!c.open) break;
@@ -124,9 +162,7 @@ function download(meta, c) {
 
 async function finalize(tid, name, chunks, expectedHash, c) {
     const tag = document.getElementById(`tag-${tid}`);
-    const row = document.getElementById(`row-${tid}`);
     tag.innerText = "VERIFYING...";
-    
     const blob = new Blob(chunks);
     const actualBuf = await blob.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', actualBuf);
@@ -135,13 +171,6 @@ async function finalize(tid, name, chunks, expectedHash, c) {
     if (actualHash !== expectedHash) {
         tag.innerText = "CORRUPT";
         tag.style.color = "#ff4444";
-        
-        // --- ADD RETRY BUTTON ---
-        // We find the percentage div and replace it with a button
-        const percDiv = document.getElementById(`perc-${tid}`); // Check this ID!
-        if (percDiv) {
-            percDiv.innerHTML = `<button class="btn" onclick="retryTransfer('${name}', '${c.peer}', '${tid}')">RETRY</button>`;
-        }
     } else {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -166,19 +195,7 @@ function updateUI(id, curr, total) {
     if(document.getElementById(`perc-${id}`)) document.getElementById(`perc-${id}`).innerText = p + "%";
 }
 
-function retryTransfer(name, peerId, oldTid) {
-    // Remove the failed row so a new one can take its place
-    const oldRow = document.getElementById(`row-${oldTid}`);
-    if (oldRow) oldRow.remove();
-
-    // Re-request the file
-    if (connections[peerId]) {
-        connections[peerId].send({ type: 'req', name: name });
-    }
-}
 function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
-
-
