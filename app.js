@@ -3,50 +3,49 @@ const CHUNK_SIZE = 16384;
 
 async function joinMesh() {
     const room = document.getElementById('roomInput').value.trim();
-    if (!room) return alert("Please enter a room name");
-    if (peer) peer.destroy();
+    if (!room) return alert("Enter a room name");
 
-    const myId = `TITAN-${room}-${Math.floor(Math.random() * 10000)}`;
+    if (peer) peer.destroy();
     
-    // IMPORTANT: SECURE CONFIG FOR GITHUB PAGES (HTTPS)
+    // Create a truly unique ID to avoid WebSocket "Already Taken" errors
+    const myId = `TITAN-${room}-${Date.now()}`;
+    
     peer = new Peer(myId, {
         host: '0.peerjs.com',
         port: 443,
         secure: true,
         debug: 1,
-        config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }
+        config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }]}
     });
 
     peer.on('open', (id) => {
         updateStatus("ONLINE", true);
-        console.log("My Peer ID: " + id);
+        console.log("My ID:", id);
         
-        // Scan for lobby slots 1-5 to find other peers
+        // Scan for Lobby slots 1-5
         for(let i=1; i<=5; i++) {
-            const t = `TITAN-LOBBY-${room}-${i}`;
-            if (peer.id !== t) handleConn(peer.connect(t));
+            const target = `TITAN-LOBBY-${room}-${i}`;
+            if (id !== target) handleConn(peer.connect(target));
         }
         tryLobby(room, 1);
     });
 
     peer.on('connection', c => handleConn(c));
+    
+    peer.on('disconnected', () => peer.reconnect());
+    
+    peer.on('error', (err) => {
+        if (err.type !== 'peer-unavailable') console.error("PeerJS:", err.type);
+    });
 }
 
 function tryLobby(room, s) {
     if (s > 5) return;
     const lId = `TITAN-LOBBY-${room}-${s}`;
-    const lPeer = new Peer(lId, {
-        host: '0.peerjs.com',
-        port: 443,
-        secure: true,
-        config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] }
-    });
+    const lPeer = new Peer(lId, { host: '0.peerjs.com', port: 443, secure: true });
     
     lPeer.on('open', () => lPeer.on('connection', c => handleConn(c)));
-    lPeer.on('error', () => { 
-        lPeer.destroy(); 
-        tryLobby(room, s+1); 
-    });
+    lPeer.on('error', () => { lPeer.destroy(); tryLobby(room, s+1); });
 }
 
 function handleConn(c) {
@@ -56,13 +55,17 @@ function handleConn(c) {
         connections[c.peer] = c;
         renderPeers();
         sync(c);
+        
+        // HEARTBEAT: Prevents GitHub/PeerJS from closing idle connections
+        const hb = setInterval(() => {
+            if (c.open) c.send({ type: 'hb' });
+            else clearInterval(hb);
+        }, 5000);
     });
 
     c.on('data', data => {
-        if (data.type === 'list') { 
-            remoteFiles[c.peer] = data.files; 
-            renderRemote(); 
-        }
+        if (data.type === 'hb') return; 
+        if (data.type === 'list') { remoteFiles[c.peer] = data.files; renderRemote(); }
         if (data.type === 'req') upload(data.name, c);
         if (data.type === 'meta') download(data, c);
     });
@@ -81,19 +84,15 @@ function renderPeers() {
     const peers = Object.keys(connections);
     
     countPill.style.display = "block";
-    countPill.innerText = `${peers.length} PEERS CONNECTED`;
+    countPill.innerText = `${peers.length} PEERS`;
 
     gallery.innerHTML = peers.map(pid => {
-        const shortId = pid.split('-').pop();
-        return `
-            <div class="peer-card">
-                <div class="status-dot"></div>
-                ID: ${shortId} (ACTIVE)
-            </div>`;
+        const shortId = pid.split('-').pop().slice(-4);
+        return `<div class="peer-card"><div class="status-dot"></div>ID: ...${shortId}</div>`;
     }).join('');
 }
 
-// --- FILE LOGIC ---
+// --- FILE ENGINE ---
 
 document.getElementById('fileInput').onchange = (e) => {
     for (let f of e.target.files) {
@@ -108,13 +107,11 @@ function sync(c) {
 }
 
 function renderRemote() {
-    const ui = document.getElementById('peerList'); 
-    ui.innerHTML = "";
+    const ui = document.getElementById('peerList'); ui.innerHTML = "";
     Object.entries(remoteFiles).forEach(([pid, files]) => {
         files.forEach(f => {
-            ui.innerHTML += `
-            <div class="file-row">
-                <span>${f.name} <small style="color:var(--p); font-size:9px;">(Peer ${pid.split('-').pop()})</small></span>
+            ui.innerHTML += `<div class="file-row">
+                <span>${f.name} <small style="color:var(--p)">(${pid.split('-').pop().slice(-4)})</small></span>
                 <button class="btn" style="padding:4px 10px; font-size:10px" onclick="connections['${pid}'].send({type:'req', name:'${f.name}'})">GET</button>
             </div>`;
         });
@@ -122,8 +119,7 @@ function renderRemote() {
 }
 
 async function upload(name, c) {
-    const f = myFiles[name];
-    if (!f) return;
+    const f = myFiles[name]; if (!f) return;
     const tid = Math.random().toString(36).substr(2, 5);
     const buf = await f.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
@@ -149,7 +145,7 @@ function download(meta, c) {
     const handler = async (data) => {
         if (data.type === 'eof' && data.tid === meta.tid) {
             c.off('data', handler);
-            finalize(meta.tid, meta.name, chunks, meta.hash, c);
+            finalize(meta.tid, meta.name, chunks, meta.hash);
             return;
         }
         if (data instanceof ArrayBuffer || data instanceof Uint8Array || data.byteLength !== undefined) {
@@ -160,7 +156,7 @@ function download(meta, c) {
     c.on('data', handler);
 }
 
-async function finalize(tid, name, chunks, expectedHash, c) {
+async function finalize(tid, name, chunks, expectedHash) {
     const tag = document.getElementById(`tag-${tid}`);
     tag.innerText = "VERIFYING...";
     const blob = new Blob(chunks);
@@ -169,14 +165,11 @@ async function finalize(tid, name, chunks, expectedHash, c) {
     const actualHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 
     if (actualHash !== expectedHash) {
-        tag.innerText = "CORRUPT";
-        tag.style.color = "#ff4444";
+        tag.innerText = "CORRUPT"; tag.style.color = "#ff4444";
     } else {
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = name; a.click();
-        tag.innerText = "DONE";
-        tag.style.color = "#8bc34a";
+        const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+        tag.innerText = "DONE"; tag.style.color = "#8bc34a";
     }
 }
 
