@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Titan P2P | Pro</title>
+    <title>TITAN P2P | Secure Mesh</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
@@ -13,16 +13,21 @@
     <div class="logo">TITAN <span>P2P</span></div>
     <div class="nav-controls">
         <div id="status" class="pill">OFFLINE</div>
-        <input type="text" id="roomInput" placeholder="Room Name">
-        <button class="btn" onclick="joinMesh()">JOIN</button>
+        <div id="peerCount" class="pill active" style="display:none">0 PEERS</div>
+        <input type="text" id="roomInput" placeholder="Enter Room Name">
+        <button class="btn" onclick="joinMesh()">JOIN MESH</button>
     </div>
 </header>
+
+<div id="meshIndicator">
+    <div id="peerGallery"></div>
+</div>
 
 <main>
     <section class="panel">
         <div class="panel-header">
             <h3>MY LIBRARY</h3>
-            <button class="btn btn-alt" onclick="document.getElementById('fileInput').click()">+ ADD</button>
+            <button class="btn btn-alt" onclick="document.getElementById('fileInput').click()">+ ADD FILE</button>
         </div>
         <input type="file" id="fileInput" multiple style="display:none">
         <div id="myList" class="file-area"></div>
@@ -30,8 +35,7 @@
 
     <section class="panel">
         <div class="panel-header">
-            <h3>NETWORK</h3>
-            <div id="peerGallery" style="display: flex; gap: 5px;"></div>
+            <h3>NETWORK FILES</h3>
         </div>
         <div id="peerList" class="file-area"></div>
     </section>
@@ -44,4 +48,3 @@
 <script src="app.js"></script>
 </body>
 </html>
-
