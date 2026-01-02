@@ -7,7 +7,6 @@ async function joinMesh() {
 
     if (peer) peer.destroy();
     
-    // Create a truly unique ID to avoid WebSocket "Already Taken" errors
     const myId = `TITAN-${room}-${Date.now()}`;
     
     peer = new Peer(myId, {
@@ -22,7 +21,6 @@ async function joinMesh() {
         updateStatus("ONLINE", true);
         console.log("My ID:", id);
         
-        // Scan for Lobby slots 1-5
         for(let i=1; i<=5; i++) {
             const target = `TITAN-LOBBY-${room}-${i}`;
             if (id !== target) handleConn(peer.connect(target));
@@ -56,7 +54,6 @@ function handleConn(c) {
         renderPeers();
         sync(c);
         
-        // HEARTBEAT: Prevents GitHub/PeerJS from closing idle connections
         const hb = setInterval(() => {
             if (c.open) c.send({ type: 'hb' });
             else clearInterval(hb);
@@ -92,7 +89,6 @@ function renderPeers() {
     }).join('');
 }
 
-// --- FILE ENGINE ---
 
 document.getElementById('fileInput').onchange = (e) => {
     for (let f of e.target.files) {
@@ -192,3 +188,4 @@ function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
+
