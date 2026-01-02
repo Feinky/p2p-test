@@ -88,16 +88,25 @@ async function upload(name, c) {
     const f = myFiles[name];
     if (!f) return;
     const tid = Math.random().toString(36).substr(2, 5);
-    const buf = await f.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
-    const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
     createRow(tid, f.name, 'SENDING');
+
+    
+    const hashBuffer = await crypto.subtle.digest('SHA-256', await f.slice(0, Math.min(f.size, 100000000)).arrayBuffer()); 
+    const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
     c.send({ type: 'meta', name: f.name, size: f.size, tid: tid, hash: fileHash });
+
     let off = 0;
     while (off < f.size) {
         if (!c.open) break;
-        if (c.dataChannel.bufferedAmount > 1048576) { await new Promise(r => setTimeout(r, 50)); continue; }
-        c.send(buf.slice(off, off + CHUNK_SIZE));
+        if (c.dataChannel.bufferedAmount > 1048576) { 
+            await new Promise(r => setTimeout(r, 50)); 
+            continue; 
+        }
+        const blobSlice = f.slice(off, off + CHUNK_SIZE);
+        const chunkBuf = await blobSlice.arrayBuffer(); 
+        
+        c.send(chunkBuf);
         off += CHUNK_SIZE;
         updateUI(tid, off, f.size);
     }
@@ -174,6 +183,7 @@ function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
+
 
 
 
