@@ -14,7 +14,7 @@
     <div class="nav-controls">
         <div id="status" class="pill">OFFLINE</div>
         <div id="peerCount" class="pill active" style="display:none">0 PEERS</div>
-        <input type="text" id="roomInput" placeholder="Enter Room Name">
+        <input type="text" id="roomInput" placeholder="Room Name">
         <button class="btn" onclick="joinMesh()">JOIN MESH</button>
     </div>
 </header>
@@ -27,23 +27,19 @@
     <section class="panel">
         <div class="panel-header">
             <h3>MY LIBRARY</h3>
-            <button class="btn btn-alt" onclick="document.getElementById('fileInput').click()">+ ADD FILE</button>
+            <button class="btn btn-alt" onclick="document.getElementById('fileInput').click()">+ ADD</button>
         </div>
         <input type="file" id="fileInput" multiple style="display:none">
         <div id="myList" class="file-area"></div>
     </section>
 
     <section class="panel">
-        <div class="panel-header">
-            <h3>NETWORK FILES</h3>
-        </div>
+        <div class="panel-header"><h3>NETWORK FILES</h3></div>
         <div id="peerList" class="file-area"></div>
     </section>
 </main>
 
-<footer id="monitor">
-    <div id="transfers"></div>
-</footer>
+<footer id="monitor"><div id="transfers"></div></footer>
 
 <script src="app.js"></script>
 </body>
