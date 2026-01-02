@@ -11,6 +11,7 @@ async function joinMesh() {
 
     peer.on('open', (id) => {
         updateStatus("ONLINE", true);
+        // Look for slots 1-5
         for(let i=1; i<=5; i++) {
             const t = `TITAN-LOBBY-${room}-${i}`;
             if (peer.id !== t) handleConn(peer.connect(t));
@@ -134,7 +135,10 @@ async function finalize(tid, name, chunks, expectedHash, c) {
     if (actualHash !== expectedHash) {
         tag.innerText = "CORRUPT";
         tag.style.color = "#ff4444";
-        const percDiv = document.getElementById(`perc-${tid}`);
+        
+        // --- ADD RETRY BUTTON ---
+        // We find the percentage div and replace it with a button
+        const percDiv = document.getElementById(`perc-${tid}`); // Check this ID!
         if (percDiv) {
             percDiv.innerHTML = `<button class="btn" onclick="retryTransfer('${name}', '${c.peer}', '${tid}')">RETRY</button>`;
         }
@@ -163,9 +167,11 @@ function updateUI(id, curr, total) {
 }
 
 function retryTransfer(name, peerId, oldTid) {
+    // Remove the failed row so a new one can take its place
     const oldRow = document.getElementById(`row-${oldTid}`);
     if (oldRow) oldRow.remove();
 
+    // Re-request the file
     if (connections[peerId]) {
         connections[peerId].send({ type: 'req', name: name });
     }
@@ -174,7 +180,5 @@ function updateStatus(t, a) {
     const e = document.getElementById('status');
     e.innerText = t; a ? e.classList.add('active') : e.classList.remove('active');
 }
-
-
 
 
